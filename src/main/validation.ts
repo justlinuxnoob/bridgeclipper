@@ -6,6 +6,7 @@ import { DURATION_IDS, isVideoSpeed } from '../shared/job-contract'
 import { isModelId } from '../shared/openrouter-models'
 import { LOGO_OPACITY_RANGE, LOGO_WIDTH_RANGE, type LogoOverlay } from '../shared/logo'
 import { assertManagedLogo } from './logo'
+import { isContentMode } from '../shared/content-mode'
 
 export function validateJobConfig(value: unknown): ClipJobConfig {
   if (!value || typeof value !== 'object') throw new Error('Invalid job options')
@@ -15,6 +16,7 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (sourceError) throw new Error(sourceError)
   if (typeof v.autoClipCount !== 'boolean' || typeof v.includeCaptions !== 'boolean') throw new Error('Invalid job options')
   if (typeof v.layoutVision !== 'boolean') throw new Error('Invalid vision option')
+  if (v.contentMode !== undefined && !isContentMode(v.contentMode)) throw new Error('Invalid content mode')
   if (v.videoSpeed !== undefined && !isVideoSpeed(v.videoSpeed)) throw new Error('Video speed must be between 1× and 2×')
   if (v.clippingMode !== undefined && !['quality', 'economy', 'advanced'].includes(v.clippingMode)) throw new Error('Invalid clipping mode')
   if (v.clippingMode === 'advanced' && (!isModelId(v.plannerModel) || !isModelId(v.transcriptionModel))) throw new Error('Choose both models in Advanced mode')

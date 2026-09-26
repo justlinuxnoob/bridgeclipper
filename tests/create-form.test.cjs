@@ -237,3 +237,15 @@ test('the logo section offers a picker, and the editor draws the frame, logo and
   assert.match(landscape, /aspect-ratio:16 \/ 9/)
   assert.doesNotMatch(landscape, /border-dashed/)
 })
+
+test('the video step offers the content modes and the request carries the chosen one', () => {
+  const { JobForm, useDraftStore, buildJobRequest } = form.exports
+  const html = renderToStaticMarkup(React.createElement(JobForm, { onSubmit() {} }))
+  const group = html.match(/role="radiogroup" aria-label="Content type">(.*?)<\/div>/s)?.[1] ?? ''
+  assert.deepEqual([...group.matchAll(/role="radio"[^>]*>([^<]+)</g)].map((m) => m[1]), ['Podcast', 'Streamer', 'Gambling'])
+  assert.match(group, /aria-checked="true"[^>]*>Podcast</)
+  const draft = { ...useDraftStore.getState(), source: 'https://example.com/video' }
+  assert.equal(draft.contentMode, 'podcast')
+  assert.equal(buildJobRequest(draft, { start: null, end: null }).contentMode, 'podcast')
+  assert.equal(buildJobRequest({ ...draft, contentMode: 'gambling' }, { start: null, end: null }).contentMode, 'gambling')
+})

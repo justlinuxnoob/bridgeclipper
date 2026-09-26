@@ -99,6 +99,14 @@ class BridgeTests(unittest.TestCase):
                 with self.subTest(logo=bad), self.assertRaises(ValueError):
                     bridge.validate_config(self.config(logo=bad))
 
+    def test_content_mode_validation(self):
+        for mode in ("podcast", "streamer", "gambling"):
+            self.assertEqual(bridge.validate_config(self.config(content_mode=mode))["content_mode"], mode)
+        self.assertNotIn("content_mode", bridge.validate_config(self.config()))
+        for mode in (None, "", "vlog", "Podcast", 1):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                bridge.validate_config(self.config(content_mode=mode))
+
     def test_logo_reaches_the_job_request(self):
         seen = {}
 
@@ -125,11 +133,13 @@ class BridgeTests(unittest.TestCase):
             open(path, "wb").close()
             logo = {"path": path, "x": 0.1, "y": 0.2, "width": 0.3}
             with patch.dict(sys.modules, modules), patch.dict(os.environ, {}), redirect_stdout(io.StringIO()):
-                asyncio.run(bridge.run(self.config(logo=logo)))
+                asyncio.run(bridge.run(self.config(logo=logo, content_mode="streamer")))
                 self.assertEqual(seen["logo"], logo)
+                self.assertEqual(seen["content_mode"], "streamer")
                 seen.clear()
                 asyncio.run(bridge.run(self.config()))
                 self.assertIsNone(seen["logo"])
+                self.assertEqual(seen["content_mode"], "podcast")
 
     def test_rejects_invalid_config_without_importing_bridgeclip(self):
         for value in ([], None, "config", self.config(contract_version=None), self.config(contract_version=1), self.config(layout_vision_enabled=None), self.config(job_id="../escape"), self.config(video_url="file:///etc/passwd"), self.config(max_clips=True), self.config(aspect_ratio="1:1"), self.config(layout_style="unknown"), self.config(pacing="unknown"), self.config(clipping_mode="unknown"), self.config(duration_ranges=["unknown"])):

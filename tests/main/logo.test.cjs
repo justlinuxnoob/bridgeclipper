@@ -63,6 +63,7 @@ function setup(t) {
     '../shared/job-contract': jobContract,
     '../shared/openrouter-models': loadShared('openrouter-models.ts'),
     '../shared/logo': sharedLogo,
+    '../shared/content-mode': loadShared('content-mode.ts'),
     './logo': logo
   })
   const write = (name, bytes) => {

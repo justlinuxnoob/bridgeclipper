@@ -14,7 +14,8 @@ import { Button } from './ui/Button'
 import { TextInput } from './ui/Field'
 import { IconTile } from './ui/IconTile'
 import { SettingRow } from './ui/SettingRow'
-import { onRadioKeyDown } from './ui/Segmented'
+import { Segmented, onRadioKeyDown } from './ui/Segmented'
+import { CONTENT_MODES } from '../../shared/content-mode'
 import { DURATION_OPTIONS, VIDEO_SPEED_OPTIONS } from '../../shared/job-contract'
 import { isModelId } from '../../shared/openrouter-models'
 import { useModelStore } from '../store/use-model-store'
@@ -63,6 +64,7 @@ export function parseTrimRange(enabled: boolean, startText: string, endText: str
 export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; end: number | null }, logoPath: string | null = null): ClipJobRequest {
   return {
     videoUrl: normalizeVideoSource(draft.source),
+    contentMode: draft.contentMode ?? 'podcast',
     clippingMode: draft.clippingMode,
     ...(draft.clippingMode === 'advanced' ? { plannerModel: draft.plannerModel, transcriptionModel: draft.transcriptionModel } : {}),
     maxClips: draft.autoClipCount ? null : draft.maxClips,
@@ -243,6 +245,17 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
   return (
     <div className="space-y-3">
       <SourcePicker value={draft.source} onChange={(source) => update({ source })} disabled={disabled} />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span className="eyebrow">Content</span>
+        <Segmented
+          label="Content type"
+          size="sm"
+          value={draft.contentMode ?? 'podcast'}
+          options={CONTENT_MODES.map((mode) => ({ value: mode.id, label: mode.label }))}
+          onChange={(contentMode) => update({ contentMode })}
+        />
+        <span className="text-2xs text-ink-subtle">{CONTENT_MODES.find((mode) => mode.id === (draft.contentMode ?? 'podcast'))?.hint}</span>
+      </div>
       <SettingRow
         title="Clip only part of the video"
         description="Set a start and end time. Leave either empty for an open range."
@@ -525,6 +538,7 @@ function ReviewStep({ draft, trim, onEdit, hasLogo }: {
 
   const rows: { step: WizardStep; label: string; value: string }[] = [
     { step: 'video', label: 'Video', value: `${sourceLabel(draft.source)}${trimLabel}` },
+    { step: 'video', label: 'Content', value: CONTENT_MODES.find((mode) => mode.id === (draft.contentMode ?? 'podcast'))?.label ?? 'Podcast' },
     { step: 'format', label: 'Format', value: `${FORMATS.find((f) => f.id === draft.aspectRatio)?.label ?? draft.aspectRatio} ${draft.aspectRatio} · ${framing}` },
     { step: 'format', label: 'Pacing', value: draft.pacing === 'tight' ? 'Cut dead air' : 'Keep pauses' },
     { step: 'format', label: 'Speed', value: `${draft.videoSpeed ?? 1}×${(draft.videoSpeed ?? 1) === 1 ? ' · Normal' : ' · All exported clips'}` },

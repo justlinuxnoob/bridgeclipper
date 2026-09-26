@@ -1,9 +1,12 @@
 import type { JobOutput } from './job-output'
 import type { LogoOverlay } from './logo'
+import type { ContentMode } from './content-mode'
 
 /** Options for one clipping run, as the Create wizard submits them. */
 export interface ClipJobRequest {
   videoUrl: string
+  /** Podcast, Streamer or Gambling. Missing on older queued requests: podcast. */
+  contentMode?: ContentMode
   /** Missing on older queued requests; those retain the original quality mode. */
   clippingMode?: 'quality' | 'economy' | 'advanced'
   /** Required in Advanced mode; presets choose their own models. */

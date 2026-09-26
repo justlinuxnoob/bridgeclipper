@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { defaultLogoPlacement, type LogoPlacement } from '../../shared/logo'
+import type { ContentMode } from '../../shared/content-mode'
 
 /** The Create wizard's steps, in order. */
 export type WizardStep = 'video' | 'format' | 'clips' | 'captions' | 'review'
@@ -18,6 +19,8 @@ export interface StartedJob {
  */
 export interface ClipDraft {
   source: string
+  /** Podcast (transcript only), Streamer or Gambling (also loud-moment hints). */
+  contentMode: ContentMode
   clippingMode: 'quality' | 'economy' | 'advanced'
   plannerModel: string
   transcriptionModel: string
@@ -58,6 +61,7 @@ interface DraftState extends ClipDraft {
 
 export const useDraftStore = create<DraftState>((set) => ({
   source: '',
+  contentMode: 'podcast',
   clippingMode: 'quality',
   plannerModel: '',
   transcriptionModel: '',

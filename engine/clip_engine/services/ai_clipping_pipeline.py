@@ -54,6 +54,7 @@ from clip_engine.services.transcription_service import (
     TranscriptionService,
 )
 from clip_engine.services.visual_clip_sampling import has_visual_change, sample_visual_planning_frames
+from clip_engine.services.hype_detector import CONTENT_MODES, HYPE_MODES, HypeAnalysis, find_hype_moments
 from clip_engine.services.video_downloader import (
     DownloadResult,
     VideoDownloaderService,
@@ -110,9 +111,14 @@ class ClippingJobRequest:
     video_speed: float = 1.0
     # Logo watermark for every clip (a dict from the bridge is converted).
     logo: Optional[LogoOverlay] = None
+    # podcast: transcript only. streamer/gambling: loudness spikes are sent to
+    # the planner as hype hints.
+    content_mode: str = "podcast"
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
+        if self.content_mode not in CONTENT_MODES:
+            raise ValueError("Invalid content mode")
         if isinstance(self.logo, dict):
             self.logo = LogoOverlay.from_dict(self.logo)
         if self.job_id is None:
@@ -321,6 +327,16 @@ class AIClippingPipeline:
 
             capture_memory("after_transcription")
 
+            # Streamer/Gambling: loud reactions relative to this video's own level.
+            hype = HypeAnalysis(moments=[])
+            if request.content_mode in HYPE_MODES:
+                self._update_progress(job_id, JobStatus.PLANNING, 27, "Finding hype moments...")
+                stage_start = time.perf_counter()
+                hype = await find_hype_moments(
+                    download_result.video_path, request.start_time_seconds, effective_end_time,
+                )
+                stage_timings["hype_detection"] = time.perf_counter() - stage_start
+
             # Step 3: Plan clips using AI
             current_stage = "planning"
             self._update_progress(job_id, JobStatus.PLANNING, 30, "Planning viral clips...")
@@ -341,6 +357,8 @@ class AIClippingPipeline:
                 start_time_seconds=request.start_time_seconds,
                 end_time_seconds=request.end_time_seconds,
                 aspect_ratio=request.aspect_ratio,
+                content_mode=request.content_mode,
+                hype_moments=hype.moments,
             )
             stage_timings["planning"] = time.perf_counter() - stage_start
             logger.info(f"Planned {len(clip_plan.segments)} clips")
@@ -357,6 +375,9 @@ class AIClippingPipeline:
                 "insights": clip_plan.insights,
                 "planning_source": "visual" if visual_frames else "transcript",
             }
+            if request.content_mode != "podcast":
+                plan_data["content_mode"] = request.content_mode
+                plan_data["hype_moments"] = [moment.to_dict() for moment in hype.moments]
 
             if self.local_mode:
                 plan_url = self._save_local_json(job_id, "plan", plan_data)

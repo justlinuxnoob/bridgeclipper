@@ -38,8 +38,31 @@ from clip_engine.services.transcription_service import (
     last_sentence_end_between,
     next_start_at_or_after,
 )
+from clip_engine.services.hype_detector import HYPE_MODES, HypeMoment, format_hype_hints
 
 logger = logging.getLogger(__name__)
+
+# Appended to the system prompt for Streamer and Gambling jobs. Podcast jobs
+# get no addition, so their prompt is unchanged.
+CONTENT_MODE_GUIDANCE = {
+    "streamer": """
+
+## CONTENT MODE: STREAMER
+
+This is a livestream or gaming VOD, chosen by the user. Classify it as Stream/Gaming in "insights".
+- Prioritize: loud reactions and screaming, clutch plays and fails, rage or disbelief, funny exchanges with chat or teammates, unexpected events on screen.
+- The best clips build up and then explode: include the calm lead-in before the reaction, and let the reaction play out.
+- Weak material: reading chat without a payoff, waiting in menus or queues, long silent gameplay.""",
+    "gambling": """
+
+## CONTENT MODE: GAMBLING STREAM
+
+This is a casino or slots stream, chosen by the user. Classify it as Gambling Stream in "insights".
+- Prioritize: big wins and multiplier hits, bonus rounds triggering, near misses, bonus buys that pay off, and the streamer's reaction to each.
+- Include the spin, bet or bonus that leads to the result, not only the reaction.
+- Weak material: long stretches of routine spins with no reaction, menu browsing, deposit/withdraw talk.
+- Only name amounts or multipliers that are actually spoken in the transcript.""",
+}
 
 
 @dataclass
@@ -382,6 +405,8 @@ class IntelligencePlannerService:
         start_time_seconds: Optional[float] = None,
         end_time_seconds: Optional[float] = None,
         aspect_ratio: str = "9:16",
+        content_mode: str = "podcast",
+        hype_moments: Optional[list[HypeMoment]] = None,
     ) -> ClipPlanResponse:
         """
         Plan viral clips from video content.
@@ -399,6 +424,8 @@ class IntelligencePlannerService:
             start_time_seconds: Optional start of processing range (clips only from this point)
             end_time_seconds: Optional end of processing range (clips only until this point)
             aspect_ratio: Output aspect ratio; long 16:9 clips are planned as longform edits
+            content_mode: podcast (unchanged prompt), streamer or gambling (mode guidance)
+            hype_moments: Loudness spikes sent as hints (streamer/gambling only)
 
         Returns:
             ClipPlanResponse with identified clips
@@ -524,6 +551,14 @@ class IntelligencePlannerService:
             if transcript else
             self._build_visual_only_system_prompt(clip_count, min_duration_seconds, max_duration_seconds, duration_ranges)
         )
+        # Podcast keeps the prompt exactly as before; the other modes add guidance.
+        system_prompt += CONTENT_MODE_GUIDANCE.get(content_mode, "")
+        hype_hints = (
+            format_hype_hints(self._hints_in_range(hype_moments or [], start_time_seconds, end_time_seconds), content_mode)
+            if content_mode in HYPE_MODES else ""
+        )
+        if hype_hints:
+            logger.info("Sending %s hype moments to the planner", hype_hints.count("\n- "))
         transcript_text = self._build_transcript_text(transcript)
         
         logger.info("Transcript text length: %s chars", len(transcript_text))
@@ -578,6 +613,7 @@ class IntelligencePlannerService:
             transcript,
             self._current_video_duration or effective_duration_seconds,
             longform,
+            hype_hints,
         )
         
         if use_claude_code:
@@ -880,6 +916,15 @@ an empty emphasis array, and scores with hook, standalone, arc, quotability, and
 values from 0 to 10. Treat quotability as shareability of the visible moment, not speech.
 Do not overlap clips by more than 5 seconds."""
 
+    @staticmethod
+    def _hints_in_range(
+        moments: list[HypeMoment], start_seconds: Optional[float], end_seconds: Optional[float],
+    ) -> list[HypeMoment]:
+        """Moments inside the selected time range (detection already ran on it; this is a guard)."""
+        low = start_seconds or 0.0
+        high = end_seconds if end_seconds is not None else float("inf")
+        return [m for m in moments if m.end_seconds > low and m.start_seconds < high]
+
     def _build_transcript_text(self, transcript: list) -> str:
         """Build formatted transcript text: `[start - end] (speaker) text (events)`."""
         if not transcript:
@@ -937,8 +982,9 @@ Do not overlap clips by more than 5 seconds."""
         transcript: list[TranscriptSegment],
         video_duration_seconds: float = 0.0,
         longform: bool = False,
+        hype_hints: str = "",
     ) -> list[dict]:
-        """Build the planner messages (transcript, plus frames when provided)."""
+        """Build the planner messages (transcript, plus frames and hype hints when provided)."""
         user_content = []
 
         video_duration = video_duration_seconds or (
@@ -957,7 +1003,7 @@ Do not overlap clips by more than 5 seconds."""
         )
         user_content.append({
             "type": "text",
-            "text": f"{source_description}\n\nThe video is approximately {video_duration:.0f} seconds long.{frames_note}",
+            "text": f"{source_description}\n\nThe video is approximately {video_duration:.0f} seconds long.{hype_hints}{frames_note}",
         })
 
         # Add frames as images with timestamps

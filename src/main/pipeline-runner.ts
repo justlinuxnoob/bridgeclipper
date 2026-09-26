@@ -357,6 +357,7 @@ export function startClipJob(
     jobId,
     sourceType: config.videoUrl.startsWith('http') ? 'remote' : 'local',
     maxClips: config.maxClips,
+    contentMode: config.contentMode ?? 'podcast',
     autoClipCount: config.autoClipCount,
     aspectRatio: config.aspectRatio,
     captionPreset: config.captionPreset,
@@ -390,6 +391,7 @@ export function startClipJob(
     contract_version: BRIDGE_CONTRACT_VERSION,
     job_id: jobId,
     video_url: config.videoUrl,
+    content_mode: config.contentMode ?? 'podcast',
     clipping_mode: config.clippingMode ?? 'quality',
     ...(config.clippingMode === 'advanced' ? {
       planner_model: config.plannerModel,

@@ -286,6 +286,7 @@ async def run(config: dict) -> bool:
         banner_platform=config.get("banner_platform"),
         banner_channel_url=config.get("banner_channel_url"),
         logo=config.get("logo"),
+        content_mode=config.get("content_mode", "podcast"),
         keyterms=config.get("keyterms") or None,
     )
 
@@ -390,6 +391,8 @@ def validate_config(config: object) -> dict:
         any(not isinstance(term, str) or not term.strip() or len(term) > 49 for term in keyterms)
     ):
         raise ValueError("Invalid keyterms")
+    if config.get("content_mode", "podcast") not in ("podcast", "streamer", "gambling"):
+        raise ValueError("Invalid content mode")
     logo = config.get("logo")
     if logo is not None:
         # The desktop copies the logo into its own data folder; only a local PNG

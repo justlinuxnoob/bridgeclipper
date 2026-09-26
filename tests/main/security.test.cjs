@@ -28,7 +28,7 @@ const jobOutput = loadShared('job-output.ts')
 const videoSource = loadShared('video-source.ts')
 const runHistory = loadSource('run-history.ts', { '../shared/video-source': videoSource })
 const security = loadSource('security.ts', { electron: {}, '../shared/brand': loadShared('brand.ts') })
-const { validateJobConfig } = loadSource('validation.ts', { './security': security, '../shared/video-source': videoSource, '../shared/job-contract': jobContract, '../shared/openrouter-models': loadShared('openrouter-models.ts'), '../shared/logo': loadShared('logo.ts'), './logo': { assertManagedLogo() { throw new Error('Invalid logo') } } })
+const { validateJobConfig } = loadSource('validation.ts', { './security': security, '../shared/video-source': videoSource, '../shared/job-contract': jobContract, '../shared/openrouter-models': loadShared('openrouter-models.ts'), '../shared/logo': loadShared('logo.ts'), '../shared/content-mode': loadShared('content-mode.ts'), './logo': { assertManagedLogo() { throw new Error('Invalid logo') } } })
 
 test('development checks the staged FFmpeg that the clipping engine uses', async () => {
   const binDir = path.join(__dirname, '../../engine-bin')
@@ -226,6 +226,8 @@ test('job validation rejects malformed options and invalid trim intervals', () =
   for (const videoSpeed of [null, true, '1.5', 0, 0.5, 2.01, NaN, Infinity, -Infinity]) {
     assert.throws(() => validateJobConfig({ ...job, videoSpeed }), /Video speed/)
   }
+  for (const contentMode of ['podcast', 'streamer', 'gambling']) assert.equal(validateJobConfig({ ...job, contentMode }).contentMode, contentMode)
+  for (const contentMode of [null, '', 'vlog', 'Streamer', 1]) assert.throws(() => validateJobConfig({ ...job, contentMode }), /Invalid content mode/)
   assert.doesNotThrow(() => validateJobConfig({ ...job, clippingMode: 'economy' }))
   assert.doesNotThrow(() => validateJobConfig({ ...job, clippingMode: 'quality' }))
   const advanced = { ...job, clippingMode: 'advanced', plannerModel: 'google/gemini-3.8-flash', transcriptionModel: 'openai/whisper-large-v3' }
@@ -530,6 +532,7 @@ test('pipeline preserves split JSON messages and protects the job identity', asy
     plannerCapabilities: { maxOutputTokens: 8192, supportsImages: false, inputPrice: .000001, outputPrice: .000005 }
   }, window, undefined, '/tmp/queued-output')
   const forwarded = JSON.parse(workerInput)
+  assert.equal(forwarded.content_mode, 'podcast', 'older requests without a mode run as podcast')
   assert.equal(forwarded.video_speed, 1.5)
   assert.equal(forwarded.contract_version, 2)
   assert.equal(forwarded.output_dir, '/tmp/queued-output')
