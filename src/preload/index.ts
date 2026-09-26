@@ -18,10 +18,13 @@ import type { UpdateState } from '../shared/updates'
 export interface ClipSettings {
   openrouterConfigured: boolean
   zernioConfigured: boolean
+  groqConfigured: boolean
   outputDirectory: string
   pythonPath: string
   customVocabulary: string
   plannerBackend: 'openrouter' | 'claude_code'
+  transcriptionBackend: 'openrouter' | 'groq' | 'local'
+  localWhisperModel: 'large-v3-turbo-q5_0' | 'small'
 }
 
 export type { ClipJobRequest, JobSnapshot } from '../shared/jobs'
@@ -72,7 +75,7 @@ export interface BridgeClipAPI {
   settings: {
     load: () => Promise<ClipSettings>
     save: (settings: ClipSettings) => Promise<ClipSettings>
-    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey', value: string) => Promise<ClipSettings>
+    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'groqApiKey', value: string) => Promise<ClipSettings>
     selectOutputDir: () => Promise<string | null>
   }
   zernio: {

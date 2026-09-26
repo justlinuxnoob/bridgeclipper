@@ -63,10 +63,16 @@ BUDGET_TRANSCRIPTION_MODEL = "openai/whisper-large-v3-turbo"
 BUDGET_FALLBACK_MODEL = "openai/whisper-large-v3"
 TRANSCRIPTION_ATTEMPTS_PER_MODEL = 2
 MAX_TRANSCRIPTION_RETRY_WAIT = 15.0
+# Non-OpenRouter backends use prefixed model ids, e.g. "groq/whisper-large-v3-turbo"
+# and "local/large-v3-turbo-q5_0" (a whisper.cpp ggml model).
+GROQ_MODEL_PREFIX = "groq/"
+LOCAL_MODEL_PREFIX = "local/"
+GROQ_TRANSCRIPTION_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 TRANSCRIPTION_MODEL_NAMES = {
     BUDGET_TRANSCRIPTION_MODEL: "Whisper Turbo",
     BUDGET_FALLBACK_MODEL: "Whisper Large V3",
     TRANSCRIPTION_MODEL: "MAI Transcribe 2",
+    GROQ_MODEL_PREFIX + "whisper-large-v3-turbo": "Groq Whisper Turbo",
 }
 TRANSCRIPTION_CHUNK_SECONDS = 300
 # Context kept around a requested time range so sentence boundaries at its edges still resolve.
@@ -79,8 +85,15 @@ WHISPER_V3_PRICE_PER_HOUR = 0.0288
 WAV_INPUT_OPTIONS = ["-protocol_whitelist", "file,pipe,fd", "-format_whitelist", "wav"]
 
 
+def _is_free_model(model: str) -> bool:
+    """Groq's free tier and local whisper.cpp are not billed per request."""
+    return model.startswith((GROQ_MODEL_PREFIX, LOCAL_MODEL_PREFIX))
+
+
 def _estimate_transcription_cost(duration_seconds: float, model: str = TRANSCRIPTION_MODEL) -> float:
     """Fallback estimate; prefer OpenRouter's actual usage.cost when returned."""
+    if _is_free_model(model):
+        return 0.0
     price = {
         BUDGET_TRANSCRIPTION_MODEL: WHISPER_TURBO_PRICE_PER_HOUR,
         BUDGET_FALLBACK_MODEL: WHISPER_V3_PRICE_PER_HOUR,
@@ -569,20 +582,31 @@ class TranscriptionService:
         """
         if not os.path.isfile(audio_path):
             raise TranscriptionError("Audio file not found", reason="audio_missing")
-        if not self.settings.openrouter_api_key:
+        backend = getattr(self.settings, "transcription_backend", "openrouter")
+        if backend == "openrouter" and not self.settings.openrouter_api_key:
             raise TranscriptionProviderError("auth")
+        if backend == "groq" and not self.settings.groq_api_key:
+            raise TranscriptionProviderError("groq_auth")
         if translate_to_english:
             raise TranscriptionError("Audio translation is not supported", reason="translation_unsupported")
         duration = await asyncio.to_thread(self._audio_duration, audio_path)
         segments: list[TranscriptSegment] = []
-        costs = TranscriptionApiCosts(model="")
+        costs = TranscriptionApiCosts(provider=backend, model="")
         detected_language = None
-        primary = self.settings.transcription_model
         # Keep the recovered model for the rest of this run. Retrying an
         # unavailable model for each chunk causes repeated failures and costs.
-        models = list(dict.fromkeys((primary, BUDGET_FALLBACK_MODEL, TRANSCRIPTION_MODEL, BUDGET_TRANSCRIPTION_MODEL)))
-        if getattr(self.settings, "clipping_mode", "quality") == "advanced":
-            models = [primary]
+        if backend == "local":
+            models = [LOCAL_MODEL_PREFIX + self.settings.local_whisper_model]
+        elif backend == "groq":
+            # Past the free limit, OpenRouter Whisper takes over if a key is set.
+            models = [GROQ_MODEL_PREFIX + self.settings.groq_transcription_model]
+            if self.settings.openrouter_api_key:
+                models += [BUDGET_TRANSCRIPTION_MODEL, BUDGET_FALLBACK_MODEL]
+        else:
+            primary = self.settings.transcription_model
+            models = list(dict.fromkeys((primary, BUDGET_FALLBACK_MODEL, TRANSCRIPTION_MODEL, BUDGET_TRANSCRIPTION_MODEL)))
+            if getattr(self.settings, "clipping_mode", "quality") == "advanced":
+                models = [primary]
         chunk_count = max(1, math.ceil(duration / TRANSCRIPTION_CHUNK_SECONDS))
         with tempfile.TemporaryDirectory(prefix="clip-transcribe-", dir=os.path.dirname(audio_path)) as work:
             for index in range(chunk_count):
@@ -599,6 +623,9 @@ class TranscriptionService:
                 self._progress(f"Transcribing audio, part {index + 1} of {chunk_count}...")
                 parsed = await self._transcribe_chunk(chunk_path, language, keyterms, end - start, models, costs)
                 detected_language = detected_language or parsed.language
+                if backend == "local" and not language and detected_language:
+                    # Keep later chunks in the language detected on the first one.
+                    language = detected_language
                 for segment in parsed.segments:
                     words = []
                     for word in segment.words:
@@ -618,6 +645,7 @@ class TranscriptionService:
         return TranscriptionResult(
             segments=segments, full_text=" ".join(segment.text for segment in segments),
             language=detected_language, duration_seconds=duration,
+            provider=backend,
             model=costs.model,
             api_costs=costs,
         )
@@ -664,6 +692,11 @@ class TranscriptionService:
                         await asyncio.sleep(delay)
                         continue
                     if len(models) == 1:
+                        if model.startswith(GROQ_MODEL_PREFIX) and error.reason == "rate_limit":
+                            raise TranscriptionProviderError(
+                                "groq_limit", getattr(error, "status_code", None),
+                                getattr(error, "retry_after_seconds", None),
+                            ) from error
                         raise
                     models.pop(0)
                     next_name = TRANSCRIPTION_MODEL_NAMES.get(models[0], "another transcription model")
@@ -680,7 +713,9 @@ class TranscriptionService:
             billed = duration
         cost = usage.get("cost")
         incomplete = False
-        if not _nonnegative_number(cost):
+        if _is_free_model(model):
+            cost = 0.0
+        elif not _nonnegative_number(cost):
             incomplete = model not in (TRANSCRIPTION_MODEL, BUDGET_TRANSCRIPTION_MODEL, BUDGET_FALLBACK_MODEL)
             cost = 0.0 if incomplete else _estimate_transcription_cost(billed, model)
         return TranscriptionApiCosts(model=model, audio_duration_seconds=billed, estimated_cost_usd=cost, cost_incomplete=incomplete)
@@ -714,10 +749,14 @@ class TranscriptionService:
 
     async def _request_transcript(self, audio_path: str, language: Optional[str], keyterms: Optional[list[str]], model: Optional[str] = None) -> dict:
         import httpx
+        model = model or getattr(getattr(self, "settings", None), "transcription_model", TRANSCRIPTION_MODEL)
+        if model.startswith(LOCAL_MODEL_PREFIX):
+            return await self._request_local_transcript(audio_path, language, keyterms, model[len(LOCAL_MODEL_PREFIX):])
         if os.path.getsize(audio_path) > MAX_TRANSCRIPTION_AUDIO_BYTES:
             raise TranscriptionError("Transcription audio chunk is too large", reason="audio_chunk_too_large")
+        if model.startswith(GROQ_MODEL_PREFIX):
+            return await self._request_groq_transcript(audio_path, language, keyterms, model[len(GROQ_MODEL_PREFIX):])
         audio = await asyncio.to_thread(Path(audio_path).read_bytes)
-        model = model or getattr(getattr(self, "settings", None), "transcription_model", TRANSCRIPTION_MODEL)
         payload = {
             "model": model,
             "input_audio": {"data": base64.b64encode(audio).decode("ascii"), "format": Path(audio_path).suffix.lstrip(".").lower()},
@@ -767,6 +806,66 @@ class TranscriptionService:
             raise TranscriptionProviderError("invalid_response") from None
         except httpx.HTTPError:
             raise TranscriptionProviderError("network") from None
+
+    async def _request_groq_transcript(self, audio_path: str, language: Optional[str], keyterms: Optional[list[str]], model: str) -> dict:
+        """Groq's OpenAI-compatible endpoint; the verbose_json body matches OpenRouter's."""
+        import httpx
+        audio = await asyncio.to_thread(Path(audio_path).read_bytes)
+        data: dict = {
+            "model": model,
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": ["word", "segment"],
+            "temperature": "0",
+        }
+        phrases = normalize_keyterms(keyterms)
+        if phrases:
+            # Groq's prompt holds at most 224 tokens.
+            data["prompt"] = ("Expected vocabulary: " + ", ".join(phrases))[:800]
+        if language and language != "auto":
+            data["language"] = language
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0), follow_redirects=False) as client:
+                response = await client.post(
+                    GROQ_TRANSCRIPTION_URL,
+                    headers={"Authorization": f"Bearer {self.settings.groq_api_key}"},
+                    data=data,
+                    files={"file": (Path(audio_path).name, audio, "audio/wav")},
+                )
+                if response.status_code in (401, 403):
+                    raise TranscriptionProviderError("groq_auth", response.status_code)
+                if response.status_code != 200:
+                    raise _provider_failure(response.status_code, response.headers.get("Retry-After"))
+                if len(response.content) > MAX_TRANSCRIPTION_RESPONSE_BYTES:
+                    raise TranscriptionProviderError("response_too_large", response.status_code)
+                result = response.json()
+                if not isinstance(result, dict):
+                    raise TranscriptionProviderError("invalid_response", response.status_code)
+                return result
+        except (httpx.TimeoutException, httpx.NetworkError):
+            raise TranscriptionProviderError("network") from None
+        except (ValueError, RecursionError):
+            raise TranscriptionProviderError("invalid_response") from None
+        except httpx.HTTPError:
+            raise TranscriptionProviderError("network") from None
+
+    async def _request_local_transcript(self, audio_path: str, language: Optional[str], keyterms: Optional[list[str]], model: str) -> dict:
+        """whisper.cpp on this computer; returns a verbose_json-shaped body."""
+        from clip_engine.services import local_whisper
+        duration = await asyncio.to_thread(self._audio_duration, audio_path)
+        phrases = normalize_keyterms(keyterms)
+        try:
+            return await asyncio.to_thread(
+                local_whisper.transcribe_chunk,
+                audio_path, duration,
+                language=language if language and language != "auto" else None,
+                prompt=("Expected vocabulary: " + ", ".join(phrases)) if phrases else None,
+                cli_path=self.settings.local_whisper_cli,
+                models_dir=self.settings.local_whisper_models_dir,
+                model=model,
+                threads=self.settings.local_whisper_threads,
+            )
+        except local_whisper.LocalWhisperError as e:
+            raise TranscriptionError(str(e), reason=e.reason) from e
 
     def _parse_openrouter_response(self, response: dict, audio_duration: float, model: Optional[str] = None) -> TranscriptionResult:
         """Parse provider word timings without inventing timestamps."""

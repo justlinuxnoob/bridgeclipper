@@ -57,6 +57,18 @@ FAILURES = (
     (("claude code clip planning failed",),
      "Claude Code clip planning failed.",
      "Run `claude -p \"hi\"` in a terminal to check it works, then retry."),
+    (("groq rejected the transcription key",),
+     "Groq rejected the transcription API key.",
+     "Check the Groq key in Settings → API keys, or switch Settings → Transcription to OpenRouter."),
+    (("groq free transcription limit reached",),
+     "Groq's free transcription limit is used up for now.",
+     "Wait for the limit to reset (it is hourly and daily), or add an OpenRouter key so Whisper on OpenRouter takes over automatically for about $0.01 per hour of audio."),
+    (("local whisper.cpp is not set up",),
+     "Local transcription is selected, but whisper.cpp or its model was not found.",
+     "Build whisper.cpp in ~/Projects/whisper.cpp and download the selected model, or switch Settings → Transcription to Groq or OpenRouter."),
+    (("local whisper.cpp transcription failed",),
+     "Local whisper.cpp transcription failed.",
+     "Check that whisper-cli runs from a terminal, try the smaller model, or switch Settings → Transcription to Groq."),
     (("selected planner requires a video with speech",),
      "The selected planning model cannot analyze a video without speech.",
      "Choose a planning model that supports silent-video planning in Advanced mode, or use Quality or Economy."),
@@ -228,8 +240,13 @@ async def run(config: dict) -> bool:
     settings = get_settings()
 
     missing = []
-    if not settings.openrouter_api_key:
+    # Keys are only required for the backends the user selected.
+    planner_backend = getattr(settings, "planner_backend", "openrouter")
+    transcription_backend = getattr(settings, "transcription_backend", "openrouter")
+    if "openrouter" in (planner_backend, transcription_backend) and not settings.openrouter_api_key:
         missing.append("OPENROUTER_API_KEY")
+    if transcription_backend == "groq" and not getattr(settings, "groq_api_key", None):
+        missing.append("GROQ_API_KEY")
     if missing:
         emit({"type": "error", "message": f"Missing required API keys: {', '.join(missing)}"})
         return False

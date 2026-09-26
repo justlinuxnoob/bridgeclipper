@@ -12,33 +12,47 @@ export interface AppSettings {
   openrouterApiKey: string
   /** Optional: connects social accounts for posting. Used only by the main process, never sent to the engine. */
   zernioApiKey: string
+  /** Optional: Groq's free tier transcribes with Whisper Large V3 Turbo. */
+  groqApiKey: string
   outputDirectory: string
   pythonPath: string
   /** Names and jargon the speech-to-text should spell correctly, one per line. */
   customVocabulary: string
   /** Who picks the clips: OpenRouter, or the local Claude Code CLI on the user's Claude plan. */
   plannerBackend: PlannerBackend
+  /** Who transcribes: OpenRouter, Groq's free tier (OpenRouter fallback) or whisper.cpp on this computer. */
+  transcriptionBackend: TranscriptionBackend
+  /** whisper.cpp ggml model used when transcriptionBackend is 'local'. */
+  localWhisperModel: LocalWhisperModel
 }
 
 export const PLANNER_BACKENDS = ['openrouter', 'claude_code'] as const
 export type PlannerBackend = (typeof PLANNER_BACKENDS)[number]
+export const TRANSCRIPTION_BACKENDS = ['openrouter', 'groq', 'local'] as const
+export type TranscriptionBackend = (typeof TRANSCRIPTION_BACKENDS)[number]
+export const LOCAL_WHISPER_MODELS = ['large-v3-turbo-q5_0', 'small'] as const
+export type LocalWhisperModel = (typeof LOCAL_WHISPER_MODELS)[number]
 
-export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey'
-export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'plannerBackend'> & {
+export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey' | 'groqApiKey'
+export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'plannerBackend' | 'transcriptionBackend' | 'localWhisperModel'> & {
   openrouterConfigured: boolean
   zernioConfigured: boolean
+  groqConfigured: boolean
 }
 
-const SECRET_KEYS = ['openrouterApiKey', 'zernioApiKey'] as const
+const SECRET_KEYS = ['openrouterApiKey', 'zernioApiKey', 'groqApiKey'] as const
 type SecretKey = (typeof SECRET_KEYS)[number]
 
 const DEFAULT_SETTINGS: AppSettings = {
   openrouterApiKey: '',
   zernioApiKey: '',
+  groqApiKey: '',
   outputDirectory: join(app.getPath('home'), 'BridgeClip'),
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
   customVocabulary: '',
-  plannerBackend: 'openrouter'
+  plannerBackend: 'openrouter',
+  transcriptionBackend: 'openrouter',
+  localWhisperModel: 'large-v3-turbo-q5_0'
 }
 
 const SETTINGS_VERSION = 7
@@ -49,10 +63,13 @@ interface PersistedSettings {
   version: number
   openrouterApiKey: PersistedSecret
   zernioApiKey: PersistedSecret
+  groqApiKey?: PersistedSecret
   outputDirectory: string
   pythonPath: string
   customVocabulary?: string
   plannerBackend?: PlannerBackend
+  transcriptionBackend?: TranscriptionBackend
+  localWhisperModel?: LocalWhisperModel
 }
 
 function ensureDir(dir: string): string {
@@ -74,10 +91,13 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
   const normalized: AppSettings = {
     openrouterApiKey: (settings.openrouterApiKey ?? DEFAULT_SETTINGS.openrouterApiKey).trim(),
     zernioApiKey: (settings.zernioApiKey ?? DEFAULT_SETTINGS.zernioApiKey).trim(),
+    groqApiKey: (settings.groqApiKey ?? DEFAULT_SETTINGS.groqApiKey).trim(),
     outputDirectory: (settings.outputDirectory || DEFAULT_SETTINGS.outputDirectory).trim(),
     pythonPath: (settings.pythonPath || DEFAULT_SETTINGS.pythonPath).trim(),
     customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n'),
-    plannerBackend: oneOf(PLANNER_BACKENDS, settings.plannerBackend, DEFAULT_SETTINGS.plannerBackend)
+    plannerBackend: oneOf(PLANNER_BACKENDS, settings.plannerBackend, DEFAULT_SETTINGS.plannerBackend),
+    transcriptionBackend: oneOf(TRANSCRIPTION_BACKENDS, settings.transcriptionBackend, DEFAULT_SETTINGS.transcriptionBackend),
+    localWhisperModel: oneOf(LOCAL_WHISPER_MODELS, settings.localWhisperModel, DEFAULT_SETTINGS.localWhisperModel)
   }
   normalized.outputDirectory ||= DEFAULT_SETTINGS.outputDirectory
   normalized.pythonPath ||= DEFAULT_SETTINGS.pythonPath
@@ -155,7 +175,9 @@ export function loadSettings(): AppSettings {
       outputDirectory: typeof raw.outputDirectory === 'string' ? raw.outputDirectory : DEFAULT_SETTINGS.outputDirectory,
       pythonPath: typeof raw.pythonPath === 'string' ? raw.pythonPath : DEFAULT_SETTINGS.pythonPath,
       customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary,
-      plannerBackend: oneOf(PLANNER_BACKENDS, raw.plannerBackend, DEFAULT_SETTINGS.plannerBackend)
+      plannerBackend: oneOf(PLANNER_BACKENDS, raw.plannerBackend, DEFAULT_SETTINGS.plannerBackend),
+      transcriptionBackend: oneOf(TRANSCRIPTION_BACKENDS, raw.transcriptionBackend, DEFAULT_SETTINGS.transcriptionBackend),
+      localWhisperModel: oneOf(LOCAL_WHISPER_MODELS, raw.localWhisperModel, DEFAULT_SETTINGS.localWhisperModel)
     })
 
     if (needsMigration && canEncrypt()) writeSettings(settings)
@@ -173,10 +195,13 @@ function writeSettings(settings: AppSettings): void {
     version: SETTINGS_VERSION,
     openrouterApiKey: encodeSecret(settings.openrouterApiKey),
     zernioApiKey: encodeSecret(settings.zernioApiKey),
+    groqApiKey: encodeSecret(settings.groqApiKey),
     outputDirectory: settings.outputDirectory,
     pythonPath: settings.pythonPath,
     customVocabulary: settings.customVocabulary,
-    plannerBackend: settings.plannerBackend
+    plannerBackend: settings.plannerBackend,
+    transcriptionBackend: settings.transcriptionBackend,
+    localWhisperModel: settings.localWhisperModel
   }
 
   let fd: number | undefined
@@ -205,19 +230,24 @@ export function publicSettings(settings: AppSettings): PublicSettings {
     pythonPath: settings.pythonPath,
     customVocabulary: settings.customVocabulary,
     plannerBackend: settings.plannerBackend,
+    transcriptionBackend: settings.transcriptionBackend,
+    localWhisperModel: settings.localWhisperModel,
     openrouterConfigured: Boolean(settings.openrouterApiKey),
-    zernioConfigured: Boolean(settings.zernioApiKey)
+    zernioConfigured: Boolean(settings.zernioApiKey),
+    groqConfigured: Boolean(settings.groqApiKey)
   }
 }
 
-export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'plannerBackend'>): PublicSettings {
+export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'plannerBackend' | 'transcriptionBackend' | 'localWhisperModel'>): PublicSettings {
   const current = loadSettings()
   return publicSettings(saveSettings({
     ...current,
     outputDirectory: update.outputDirectory,
     pythonPath: update.pythonPath,
     customVocabulary: update.customVocabulary,
-    plannerBackend: update.plannerBackend ?? current.plannerBackend
+    plannerBackend: update.plannerBackend ?? current.plannerBackend,
+    transcriptionBackend: update.transcriptionBackend ?? current.transcriptionBackend,
+    localWhisperModel: update.localWhisperModel ?? current.localWhisperModel
   }))
 }
 
@@ -247,10 +277,22 @@ export function replaceApiKey(key: ApiKeyName, value: string): PublicSettings {
   return publicSettings(saveSettings({ ...current, [key]: value.trim() }))
 }
 
+/** Provider keys the selected backends need that are not saved yet. */
+export function missingProviderKeys(settings: AppSettings): ('OpenRouter' | 'Groq')[] {
+  const missing: ('OpenRouter' | 'Groq')[] = []
+  const needsOpenRouter = settings.plannerBackend === 'openrouter' || settings.transcriptionBackend === 'openrouter'
+  if (needsOpenRouter && !settings.openrouterApiKey) missing.push('OpenRouter')
+  if (settings.transcriptionBackend === 'groq' && !settings.groqApiKey) missing.push('Groq')
+  return missing
+}
+
 export function getSettingsForBridge(settings: AppSettings): Record<string, string> {
   return {
     OPENROUTER_API_KEY: settings.openrouterApiKey,
+    GROQ_API_KEY: settings.groqApiKey,
     PLANNER_BACKEND: settings.plannerBackend,
+    TRANSCRIPTION_BACKEND: settings.transcriptionBackend,
+    LOCAL_WHISPER_MODEL: settings.localWhisperModel,
     LOCAL_MODE: 'true',
     LOCAL_OUTPUT_DIR: settings.outputDirectory
   }

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
-import { PLANNER_BACKENDS, loadSettings, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
+import { LOCAL_WHISPER_MODELS, PLANNER_BACKENDS, TRANSCRIPTION_BACKENDS, loadSettings, missingProviderKeys, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
 import { ensureOutputDir, getJobHistory, getJobOutput, generateThumbnail } from './file-manager'
 import {
   getEnginePath,
@@ -67,6 +67,8 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (!settings || typeof settings !== 'object') throw new Error('Invalid settings')
     if (typeof settings.outputDirectory !== 'string' || typeof settings.pythonPath !== 'string' || typeof settings.customVocabulary !== 'string') throw new Error('Invalid settings')
     if (settings.plannerBackend !== undefined && !PLANNER_BACKENDS.includes(settings.plannerBackend)) throw new Error('Invalid settings')
+    if (settings.transcriptionBackend !== undefined && !TRANSCRIPTION_BACKENDS.includes(settings.transcriptionBackend)) throw new Error('Invalid settings')
+    if (settings.localWhisperModel !== undefined && !LOCAL_WHISPER_MODELS.includes(settings.localWhisperModel)) throw new Error('Invalid settings')
     if (settings.outputDirectory !== current.outputDirectory && !selectedOutputDirectories.has(settings.outputDirectory)) throw new Error('Choose the output folder with the folder picker')
     if (app.isPackaged && settings.pythonPath !== current.pythonPath) throw new Error('Runtime paths cannot be changed in packaged builds')
     return savePublicSettings(settings)
@@ -161,9 +163,10 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid job options' } }
     const settings = loadSettings()
 
-    if (!settings.openrouterApiKey) {
-      logger.warn('job.start.missingKey', { key: 'OPENROUTER_API_KEY' })
-      return { error: 'OpenRouter API key is required for AI clip planning. Go to Settings to add it.' }
+    const missingKeys = missingProviderKeys(settings)
+    if (missingKeys.length > 0) {
+      logger.warn('job.start.missingKey', { keys: missingKeys })
+      return { error: `${missingKeys.join(' and ')} API key${missingKeys.length > 1 ? 's are' : ' is'} required for the selected AI engines. Go to Settings to add ${missingKeys.length > 1 ? 'them' : 'it'}.` }
     }
 
     const enginePath = getEnginePath()

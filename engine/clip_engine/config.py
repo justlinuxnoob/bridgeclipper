@@ -589,6 +589,8 @@ class Settings(BaseSettings):
 
     # API Keys (required)
     openrouter_api_key: Optional[str] = None
+    # Optional: Groq's free tier transcribes with Whisper Large V3 Turbo.
+    groq_api_key: Optional[str] = None
 
     # Security - API authentication
     bridgeclip_api_key: Optional[str] = None  # API key for authenticating incoming requests
@@ -660,6 +662,19 @@ class Settings(BaseSettings):
     # A model alias ("opus", "sonnet") or a full model name.
     claude_code_model: str = "opus"
     claude_code_timeout_seconds: float = 600.0
+
+    # Who transcribes: "openrouter" (model from clipping_mode), "groq" (Whisper
+    # Turbo on Groq's free tier, falling back to OpenRouter Whisper when the
+    # free limit is hit and an OpenRouter key is set) or "local" (whisper.cpp).
+    transcription_backend: Literal["openrouter", "groq", "local"] = "openrouter"
+    groq_transcription_model: str = "whisper-large-v3-turbo"
+    # Local whisper.cpp: empty paths look in ~/Projects/whisper.cpp.
+    local_whisper_cli: str = ""
+    local_whisper_models_dir: str = ""
+    # ggml model name without the "ggml-" prefix and ".bin" suffix.
+    local_whisper_model: str = "large-v3-turbo-q5_0"
+    # 0 uses one thread per physical core.
+    local_whisper_threads: int = 0
 
     # Layout vision: classifies each shot's framing and locates webcam/screen
     # overlays from one keyframe per distinct setup. Gemini 3.8 Flash has the

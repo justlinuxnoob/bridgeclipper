@@ -646,8 +646,14 @@ class AIClippingPipeline:
                 ),
                 "requested_settings": {
                     "clipping_mode": self.settings.clipping_mode,
-                    "planner_model": self.settings.planner_model,
-                    "transcription_model": self.settings.transcription_model,
+                    "planner_model": (
+                        f"claude-code/{self.settings.claude_code_model}"
+                        if self.settings.planner_backend == "claude_code" else self.settings.planner_model
+                    ),
+                    "transcription_model": {
+                        "groq": f"groq/{self.settings.groq_transcription_model}",
+                        "local": f"local/{self.settings.local_whisper_model}",
+                    }.get(self.settings.transcription_backend, self.settings.transcription_model),
                     "aspect_ratio": request.aspect_ratio,
                     "layout_style": request.layout_style,
                     "layout_vision_enabled": self.settings.layout_vision_enabled,

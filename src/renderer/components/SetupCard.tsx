@@ -8,8 +8,8 @@ import { Button } from './ui/Button'
 import { IconTile } from './ui/IconTile'
 
 /**
- * First-run setup, inline on the Create page: paste the OpenRouter key here instead of
- * being sent to Settings. Hidden once the OpenRouter key exists and the tools check out.
+ * First-run setup, inline on the Create page: paste the keys the selected AI engines need
+ * here instead of being sent to Settings. Hidden once those keys exist and the tools check out.
  */
 export function SetupCard({ onOpenSettings, className }: { onOpenSettings: () => void; className?: string }): React.JSX.Element | null {
   const { missingKeys, toolsOk } = useSetupState()
@@ -44,21 +44,33 @@ export function SetupCard({ onOpenSettings, className }: { onOpenSettings: () =>
           </IconTile>
           <div className="min-w-0">
             <p className="eyebrow text-accent-hover">One-time setup</p>
-            <h2 className="mt-0.5 text-base font-semibold text-ink">Connect OpenRouter</h2>
+            <h2 className="mt-0.5 text-base font-semibold text-ink">Connect {missingKeys.join(' and ')}</h2>
             <p className="mt-0.5 max-w-2xl text-xs text-ink-muted">
-              BridgeClip has no account and no server. One OpenRouter key covers transcription with MAI Transcribe 2 and clip selection.
+              BridgeClip has no account and no server. Your AI engines in Settings need {missingKeys.length > 1 ? 'these keys' : 'this key'}.
             </p>
           </div>
         </div>
         <div className="relative m-3 grid gap-3 rounded-xl bg-black/15 p-3 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.06)]">
-          <ApiKeyInput
-            label="OpenRouter"
-            value={drafts.openrouterApiKey}
-            onChange={(v) => setDraft('openrouterApiKey', v)}
-            onBlur={() => void persist()}
-            placeholder="sk-or-…"
-            getKeyUrl={PROVIDER_LINKS.openrouter}
-          />
+          {missingKeys.includes('OpenRouter') && (
+            <ApiKeyInput
+              label="OpenRouter"
+              value={drafts.openrouterApiKey}
+              onChange={(v) => setDraft('openrouterApiKey', v)}
+              onBlur={() => void persist()}
+              placeholder="sk-or-…"
+              getKeyUrl={PROVIDER_LINKS.openrouter}
+            />
+          )}
+          {missingKeys.includes('Groq') && (
+            <ApiKeyInput
+              label="Groq"
+              value={drafts.groqApiKey}
+              onChange={(v) => setDraft('groqApiKey', v)}
+              onBlur={() => void persist()}
+              placeholder="gsk_…"
+              getKeyUrl={PROVIDER_LINKS.groq}
+            />
+          )}
         </div>
         <p className="relative -mt-1 flex items-center gap-1.5 px-3.5 pb-3 text-2xs text-ink-subtle">
           <ShieldCheck className="h-3.5 w-3.5 text-success/80" />

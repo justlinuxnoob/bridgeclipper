@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ArrowUpRight, BookA, Bot, Check, ChevronDown, Cpu, FolderOpen, Github, Info, KeyRound, Loader2, RefreshCw, ScrollText } from 'lucide-react'
-import { useSettingsStore } from '../store/use-settings-store'
+import { missingProviderKeys, useSettingsStore } from '../store/use-settings-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
 import { getApi } from '../lib/ipc'
 import { cn, errorMessage } from '../lib/utils'
@@ -17,6 +17,7 @@ import { Badge, StatusDot } from '../components/ui/Badge'
 import { IconTile } from '../components/ui/IconTile'
 import { Callout } from '../components/ui/Callout'
 import { Segmented } from '../components/ui/Segmented'
+import { Select } from '../components/ui/Select'
 import { SettingRow } from '../components/ui/SettingRow'
 import { UpdatesRow } from '../components/Updates'
 
@@ -25,7 +26,7 @@ type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, plannerBackend, openrouterConfigured, zernioConfigured, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+  const { outputDirectory, pythonPath, customVocabulary, plannerBackend, transcriptionBackend, localWhisperModel, openrouterConfigured, groqConfigured, zernioConfigured, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -52,7 +53,9 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   const tools = toolRows(toolStatus)
   const toolsChecked = tools.every((row) => row.ok != null)
   const toolsMissing = tools.filter((row) => !row.optional && row.ok === false).length
-  const keysMissing = Number(!openrouterConfigured)
+  const missingKeys = missingProviderKeys({ plannerBackend, transcriptionBackend, openrouterConfigured, groqConfigured })
+  const keysMissing = missingKeys.length
+  const openrouterUse = [transcriptionBackend === 'openrouter' && 'transcribe', plannerBackend === 'openrouter' && 'pick clips'].filter(Boolean).join(' and ')
   const vocabularyTerms = customVocabulary.split('\n').filter((line) => line.trim()).length
 
   const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone }[] = [
@@ -73,7 +76,12 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   }, [showUpdates])
 
   const checks: { label: string; ok: boolean | null; detail: string; section: SectionId; optional?: boolean; tone?: 'danger' }[] = [
-    { label: 'OpenRouter', ok: openrouterConfigured, detail: openrouterConfigured ? 'Key saved' : plannerBackend === 'claude_code' ? 'Needed to transcribe' : 'Needed to transcribe and pick clips', section: 'keys' },
+    openrouterUse
+      ? { label: 'OpenRouter', ok: openrouterConfigured, detail: openrouterConfigured ? 'Key saved' : `Needed to ${openrouterUse}`, section: 'keys' }
+      : { label: 'OpenRouter', ok: openrouterConfigured, detail: openrouterConfigured ? 'Fallback and vision on' : 'Optional: fallback, silent videos', section: 'keys', optional: true },
+    ...(transcriptionBackend === 'groq'
+      ? [{ label: 'Groq', ok: groqConfigured, detail: groqConfigured ? 'Key saved' : 'Needed to transcribe', section: 'keys' as SectionId }]
+      : []),
     { label: 'Tools', ok: toolsChecked ? toolsMissing === 0 : null, detail: !toolsChecked ? (checkingTools ? 'Checking…' : 'Not checked') : toolsMissing ? `${toolsMissing} missing` : 'All installed', section: 'system', tone: 'danger' },
     { label: 'Zernio', ok: zernioConfigured, detail: zernioConfigured ? 'Posting on' : 'Optional, for posting', section: 'keys', optional: true }
   ]
@@ -115,7 +123,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 <IconTile tone={blocking ? 'warning' : 'success'} size="lg">{blocking ? <KeyRound /> : <Check strokeWidth={3} />}</IconTile>
                 <div>
                   <h2 className="text-sm font-semibold text-ink">{blocking ? `${blocking} thing${blocking === 1 ? '' : 's'} to set up before clipping` : 'Ready to clip'}</h2>
-                  <p className="mt-0.5 text-xs text-ink-muted">{APP_NAME} runs on this computer. One OpenRouter key covers transcription and clip selection.</p>
+                  <p className="mt-0.5 text-xs text-ink-muted">{APP_NAME} runs on this computer. Keys are only needed for the AI engines you pick below.</p>
                 </div>
               </div>
             </div>
@@ -155,6 +163,19 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   placeholder="sk-or-…"
                   description="Transcribes with MAI Transcribe 2 and picks the moments worth clipping."
                   getKeyUrl={PROVIDER_LINKS.openrouter}
+                />
+              </KeyRow>
+              <KeyRow>
+                <ApiKeyInput
+                  label={transcriptionBackend === 'groq' ? 'Groq' : 'Groq (optional)'}
+                  value={keys.drafts.groqApiKey}
+                  configured={groqConfigured}
+                  onChange={(v) => keys.setDraft('groqApiKey', v)}
+                  onRemove={() => void keys.remove('groqApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="gsk_…"
+                  description="Transcribes with Whisper Large V3 Turbo on Groq's free tier (about 8 hours of audio a day). Select it under AI engines."
+                  getKeyUrl={PROVIDER_LINKS.groq}
                 />
               </KeyRow>
               <p className="eyebrow px-1 pt-2">Optional</p>
@@ -199,6 +220,47 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   />
                 }
               />
+              <SettingRow
+                title="Transcription"
+                description={
+                  transcriptionBackend === 'groq'
+                    ? `Whisper Large V3 Turbo on Groq's free tier.${openrouterConfigured ? ' Past the free limit, Whisper on OpenRouter takes over (about $0.01 per hour of audio).' : ' Add an OpenRouter key to keep going past the free limit.'}`
+                    : transcriptionBackend === 'local'
+                      ? 'whisper.cpp on this computer (~/Projects/whisper.cpp). Free, but slow and CPU-heavy on laptops.'
+                      : 'MAI Transcribe 2 via OpenRouter (Whisper Turbo in Economy mode), billed per run.'
+                }
+                control={
+                  <Segmented
+                    label="Transcription"
+                    size="sm"
+                    value={transcriptionBackend}
+                    onChange={(value) => void commit({ transcriptionBackend: value })}
+                    options={[
+                      { value: 'openrouter', label: 'OpenRouter' },
+                      { value: 'groq', label: 'Groq (free)' },
+                      { value: 'local', label: 'Local (whisper.cpp)' }
+                    ]}
+                  />
+                }
+              />
+              {transcriptionBackend === 'local' && (
+                <SettingRow
+                  title="Local model"
+                  description="Large V3 Turbo is more accurate, especially for Lithuanian. Small is faster but makes more mistakes."
+                  control={
+                    <Select
+                      aria-label="Local whisper.cpp model"
+                      size="sm"
+                      value={localWhisperModel}
+                      onChange={(value) => void commit({ localWhisperModel: value as typeof localWhisperModel })}
+                      options={[
+                        { value: 'large-v3-turbo-q5_0', label: 'Large V3 Turbo (q5_0)' },
+                        { value: 'small', label: 'Small' }
+                      ]}
+                    />
+                  }
+                />
+              )}
             </div>
           </Section>
 

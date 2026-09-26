@@ -11,7 +11,7 @@ interface SettingsState extends ClipSettings {
   toolError: string | null
   load: () => Promise<void>
   save: (settings: Partial<ClipSettings>) => Promise<void>
-  replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey', value: string) => Promise<void>
+  replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'groqApiKey', value: string) => Promise<void>
   checkTools: () => Promise<void>
 }
 
@@ -23,10 +23,13 @@ let latestToolCheck = 0
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   openrouterConfigured: false,
   zernioConfigured: false,
+  groqConfigured: false,
   outputDirectory: '',
   pythonPath: 'python3',
   customVocabulary: '',
   plannerBackend: 'openrouter',
+  transcriptionBackend: 'openrouter',
+  localWhisperModel: 'large-v3-turbo-q5_0',
   loaded: false,
   saving: false,
   toolStatus: null,
@@ -88,23 +91,39 @@ function pickSettings(s: ClipSettings): ClipSettings {
   return {
     openrouterConfigured: s.openrouterConfigured,
     zernioConfigured: s.zernioConfigured,
+    groqConfigured: s.groqConfigured,
     outputDirectory: s.outputDirectory,
     pythonPath: s.pythonPath,
     customVocabulary: s.customVocabulary,
-    plannerBackend: s.plannerBackend
+    plannerBackend: s.plannerBackend,
+    transcriptionBackend: s.transcriptionBackend,
+    localWhisperModel: s.localWhisperModel
   }
 }
 
-export type SetupState = { ready: boolean; missingKeys: string[]; toolsOk: boolean | null }
+export type ProviderKey = 'OpenRouter' | 'Groq'
+export type SetupState = { ready: boolean; missingKeys: ProviderKey[]; toolsOk: boolean | null }
 
-/** Whether a clip job can start: the OpenRouter key is present and, once the
- *  system check has run, every required tool found. */
+/** Keys the selected AI engines need; mirrors missingProviderKeys in the main process. */
+export function missingProviderKeys(s: Pick<ClipSettings, 'plannerBackend' | 'transcriptionBackend' | 'openrouterConfigured' | 'groqConfigured'>): ProviderKey[] {
+  const needsOpenRouter = s.plannerBackend === 'openrouter' || s.transcriptionBackend === 'openrouter'
+  return [
+    needsOpenRouter && !s.openrouterConfigured && 'OpenRouter',
+    s.transcriptionBackend === 'groq' && !s.groqConfigured && 'Groq'
+  ].filter(Boolean) as ProviderKey[]
+}
+
+/** Whether a clip job can start: the keys the selected engines need are present
+ *  and, once the system check has run, every required tool found. */
 export function useSetupState(): SetupState {
-  const openrouter = useSettingsStore((s) => s.openrouterConfigured)
+  const openrouterConfigured = useSettingsStore((s) => s.openrouterConfigured)
+  const groqConfigured = useSettingsStore((s) => s.groqConfigured)
+  const plannerBackend = useSettingsStore((s) => s.plannerBackend)
+  const transcriptionBackend = useSettingsStore((s) => s.transcriptionBackend)
   const tools = useSettingsStore((s) => s.toolStatus)
   const toolError = useSettingsStore((s) => s.toolError)
   const checkingTools = useSettingsStore((s) => s.checkingTools)
-  const missingKeys = [!openrouter && 'OpenRouter'].filter(Boolean) as string[]
+  const missingKeys = missingProviderKeys({ plannerBackend, transcriptionBackend, openrouterConfigured, groqConfigured })
   const toolsOk = toolError ? false : tools
     ? tools.python && tools.pythonDeps && tools.ffmpeg && tools.ffprobe && tools.ytdlp && tools.engine && tools.bridgeRunner
     : null
