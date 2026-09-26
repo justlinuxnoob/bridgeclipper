@@ -19,6 +19,9 @@ import { DURATION_OPTIONS, VIDEO_SPEED_OPTIONS } from '../../shared/job-contract
 import { isModelId } from '../../shared/openrouter-models'
 import { useModelStore } from '../store/use-model-store'
 import { ModelPicker } from './ModelPicker'
+import { LogoSection } from './LogoPlacementEditor'
+import { useLogoStore } from '../store/use-logo-store'
+import { useSettingsStore } from '../store/use-settings-store'
 
 const DURATIONS = DURATION_OPTIONS
 
@@ -39,7 +42,7 @@ export const WIZARD_STEPS: { id: WizardStep; label: string; title: string; descr
   { id: 'video', label: 'Video', title: 'Choose a video', description: 'A local file, YouTube link or Twitch VOD link. Optionally clip only part of it.' },
   { id: 'format', label: 'Format', title: 'Format, framing and speed', description: 'Choose the look and pace of every clip in this job.' },
   { id: 'clips', label: 'Clips', title: 'Clip length and count', description: 'Pick one or more lengths, or leave them all off for any length.' },
-  { id: 'captions', label: 'Captions', title: 'Captions', description: 'Word-by-word captions burned into each clip. Silent videos are clipped without them.' },
+  { id: 'captions', label: 'Captions', title: 'Captions and logo', description: 'Word-by-word captions burned into each clip. Silent videos are clipped without them.' },
   { id: 'review', label: 'Review', title: 'Review and generate', description: 'Check the run, then generate. You can queue another video right after.' }
 ]
 
@@ -56,8 +59,8 @@ export function parseTrimRange(enabled: boolean, startText: string, endText: str
   return { start, end, error }
 }
 
-/** The run request for the current draft. */
-export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; end: number | null }): ClipJobRequest {
+/** The run request for the current draft. `logoPath` is the saved logo, when one is loaded. */
+export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; end: number | null }, logoPath: string | null = null): ClipJobRequest {
   return {
     videoUrl: normalizeVideoSource(draft.source),
     clippingMode: draft.clippingMode,
@@ -75,7 +78,8 @@ export function buildJobRequest(draft: ClipDraft, trim: { start: number | null; 
     startTimeSeconds: trim.start,
     endTimeSeconds: trim.end,
     bannerPlatform: null,
-    bannerChannelUrl: null
+    bannerChannelUrl: null,
+    ...(draft.logoEnabled && logoPath ? { logo: { path: logoPath, ...draft.logoPlacement, opacity: draft.logoOpacity } } : {})
   }
 }
 
@@ -99,6 +103,11 @@ type Update = (patch: Partial<ClipDraft>) => void
 export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, className }: JobFormProps): React.JSX.Element {
   const draft = useDraftStore()
   const { update, step, setStep } = draft
+  // The saved logo applies from any step, so load it with the form.
+  const savedLogoPath = useSettingsStore((s) => s.logoPath)
+  const logo = useLogoStore((s) => s.preview)
+  const loadLogo = useLogoStore((s) => s.load)
+  useEffect(() => { void loadLogo() }, [savedLogoPath, loadLogo])
 
   const trim = useMemo(
     () => parseTrimRange(draft.trimOpen, draft.trimStart, draft.trimEnd),
@@ -114,7 +123,7 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
   const canSubmit = hasSource && modelsValid && !blockedReason && !trim.error && !submitting && !draft.started
 
   const submit = (): void => {
-    if (canSubmit) onSubmit(buildJobRequest(draft, trim))
+    if (canSubmit) onSubmit(buildJobRequest(draft, trim, logo?.path ?? null))
   }
 
   // ⌘↵ / Ctrl+↵ generates from any step once a video is chosen.
@@ -154,7 +163,7 @@ export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, classN
         {step === 'format' && <FormatStep draft={draft} update={update} />}
         {step === 'clips' && <ClipsStep draft={draft} update={update} />}
         {step === 'captions' && <CaptionsStep draft={draft} update={update} />}
-        {step === 'review' && <ReviewStep draft={draft} trim={trim} onEdit={goTo} />}
+        {step === 'review' && <ReviewStep draft={draft} trim={trim} onEdit={goTo} hasLogo={Boolean(logo)} />}
       </Panel>
 
       {/* Actions stay pinned to the bottom edge on a solid strip. */}
@@ -491,14 +500,16 @@ function CaptionsStep({ draft, update }: { draft: ClipDraft; update: Update }): 
           disabled={!draft.includeCaptions}
         />
       </div>
+      <LogoSection draft={draft} update={update} />
     </div>
   )
 }
 
-function ReviewStep({ draft, trim, onEdit }: {
+function ReviewStep({ draft, trim, onEdit, hasLogo }: {
   draft: ClipDraft
   trim: { start: number | null; end: number | null }
   onEdit: (step: WizardStep) => void
+  hasLogo: boolean
 }): React.JSX.Element {
   const active = useActiveJobs()
   const runningCount = active.filter((job) => job.status !== 'queued').length
@@ -519,7 +530,8 @@ function ReviewStep({ draft, trim, onEdit }: {
     { step: 'format', label: 'Speed', value: `${draft.videoSpeed ?? 1}×${(draft.videoSpeed ?? 1) === 1 ? ' · Normal' : ' · All exported clips'}` },
     { step: 'clips', label: 'Mode', value: draft.clippingMode === 'advanced' ? 'Advanced · custom models' : draft.clippingMode === 'economy' ? 'Economy · lower cost' : 'Quality · higher accuracy' },
     { step: 'clips', label: 'Clips', value: `${lengths}${(draft.videoSpeed ?? 1) > 1 && draft.durations.length > 0 ? ' of source footage' : ''} · ${draft.autoClipCount ? 'AI decides how many' : `Up to ${draft.maxClips}`}` },
-    { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' }
+    { step: 'captions', label: 'Captions', value: draft.includeCaptions ? CAPTION_PRESET_NAMES[draft.captionPreset] ?? draft.captionPreset : 'Off' },
+    { step: 'captions', label: 'Logo', value: hasLogo && draft.logoEnabled ? `On · ${Math.round(draft.logoPlacement.width * 100)}% wide` : 'Off' }
   ]
   if (draft.clippingMode === 'advanced') rows.splice(5, 0,
     { step: 'clips', label: 'Transcribe', value: draft.transcriptionModel || 'Choose a model' },

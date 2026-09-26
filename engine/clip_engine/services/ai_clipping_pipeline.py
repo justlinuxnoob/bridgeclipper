@@ -37,6 +37,7 @@ from clip_engine.services.memory_monitor import (
     log_memory_usage,
 )
 from clip_engine.services.rendering_service import (
+    LogoOverlay,
     RenderRequest,
     RenderResult,
     RenderingService,
@@ -107,9 +108,13 @@ class ClippingJobRequest:
     # "tight" cuts dead air and filler words; "natural" keeps original timing.
     pacing: str = "tight"
     video_speed: float = 1.0
+    # Logo watermark for every clip (a dict from the bridge is converted).
+    logo: Optional[LogoOverlay] = None
 
     def __post_init__(self):
         validate_video_speed(self.video_speed)
+        if isinstance(self.logo, dict):
+            self.logo = LogoOverlay.from_dict(self.logo)
         if self.job_id is None:
             self.job_id = str(uuid.uuid4())
         if not isinstance(self.job_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", self.job_id):
@@ -437,6 +442,7 @@ class AIClippingPipeline:
                         emphasis_words=segment.emphasis_words,
                         banner_platform=request.banner_platform,
                         banner_channel_url=request.banner_channel_url,
+                        logo=request.logo,
                         aspect_ratio=request.aspect_ratio,
                         layout_style=request.layout_style,
                         pacing=request.pacing,

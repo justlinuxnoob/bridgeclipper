@@ -4,6 +4,8 @@ import type { ClipJobConfig } from './pipeline-runner'
 import { isWebUrl } from './security'
 import { DURATION_IDS, isVideoSpeed } from '../shared/job-contract'
 import { isModelId } from '../shared/openrouter-models'
+import { LOGO_OPACITY_RANGE, LOGO_WIDTH_RANGE, type LogoOverlay } from '../shared/logo'
+import { assertManagedLogo } from './logo'
 
 export function validateJobConfig(value: unknown): ClipJobConfig {
   if (!value || typeof value !== 'object') throw new Error('Invalid job options')
@@ -29,6 +31,20 @@ export function validateJobConfig(value: unknown): ClipJobConfig {
   if (v.endTimeSeconds !== null && v.endTimeSeconds <= (v.startTimeSeconds ?? 0)) throw new Error('Trim end must follow trim start')
   if (v.bannerPlatform !== null && (typeof v.bannerPlatform !== 'string' || !/^[a-z0-9_-]{1,64}$/i.test(v.bannerPlatform))) throw new Error('Invalid banner platform')
   if (v.bannerChannelUrl !== null && (!isWebUrl(v.bannerChannelUrl) || v.bannerChannelUrl.length > 8192)) throw new Error('Invalid banner URL')
+  const logo = v.logo === undefined || v.logo === null ? undefined : validateLogo(v.logo)
   // Capabilities are looked up in main after validation, never accepted from the renderer.
-  return { ...v, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, plannerCapabilities: undefined }
+  return { ...v, videoUrl: normalizeVideoSource(v.videoUrl), videoSpeed: v.videoSpeed ?? 1, plannerCapabilities: undefined, logo }
+}
+
+/** Placement numbers in range, and a path that is the logo copy the app wrote under userData. */
+export function validateLogo(value: unknown): LogoOverlay {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid logo')
+  const logo = value as LogoOverlay
+  if (Object.keys(logo).some((key) => !['path', 'x', 'y', 'width', 'opacity'].includes(key))) throw new Error('Invalid logo')
+  const inRange = (n: unknown, min: number, max: number): n is number => typeof n === 'number' && Number.isFinite(n) && n >= min && n <= max
+  if (!inRange(logo.x, 0, 1) || !inRange(logo.y, 0, 1)) throw new Error('Invalid logo position')
+  if (!inRange(logo.width, LOGO_WIDTH_RANGE[0], LOGO_WIDTH_RANGE[1]) || logo.x + logo.width > 1 + 1e-9) throw new Error('Invalid logo size')
+  if (logo.opacity !== undefined && !inRange(logo.opacity, LOGO_OPACITY_RANGE[0], LOGO_OPACITY_RANGE[1])) throw new Error('Invalid logo opacity')
+  assertManagedLogo(logo.path)
+  return { path: logo.path, x: logo.x, y: logo.y, width: logo.width, ...(logo.opacity !== undefined ? { opacity: logo.opacity } : {}) }
 }

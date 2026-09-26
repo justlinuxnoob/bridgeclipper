@@ -6,6 +6,7 @@ render_clip pipeline:
   2. Pacing: keep intervals from ClipEditor (tight pacing cuts dead air/fillers).
   3. One filter graph: video and audio edited on the same presentation clock.
   4. Captions and title/banner overlays remapped onto the edited timeline.
+  5. An optional logo watermark, drawn last so it sits above everything.
 """
 
 import asyncio
@@ -72,6 +73,61 @@ LANDSCAPE_BITRATE_MBPS = {1080: 12, 1440: 20, 2160: 45}
 # Leave room for input/output paths and codec options below Windows' process
 # command-line limit. Long edits can contain hundreds of trims and concats.
 MAX_INLINE_FILTER_GRAPH_BYTES = 8192
+# Logo PNGs larger than this on either side are rejected (the desktop checks too).
+MAX_LOGO_DIMENSION = 8192
+
+
+@dataclass
+class LogoOverlay:
+    """A logo watermark placed on the output frame.
+
+    x/y are the top-left corner as fractions of the output width/height;
+    width is a fraction of the output width and the height follows the
+    PNG's aspect ratio. opacity multiplies the PNG's own alpha.
+    """
+
+    path: str
+    x: float
+    y: float
+    width: float
+    opacity: float = 1.0
+
+    def __post_init__(self):
+        if not isinstance(self.path, str) or not self.path:
+            raise ValueError("Invalid logo path")
+        for name, low, high in (("x", 0, 1), ("y", 0, 1), ("width", 0, 1), ("opacity", 0, 1)):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high:
+                raise ValueError(f"Invalid logo {name}")
+        if self.width <= 0:
+            raise ValueError("Invalid logo width")
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LogoOverlay":
+        return cls(
+            path=data.get("path"), x=data.get("x"), y=data.get("y"),
+            width=data.get("width"), opacity=data.get("opacity", 1.0),
+        )
+
+
+def logo_geometry(
+    logo: LogoOverlay, logo_w: int, logo_h: int, out_w: int, out_h: int,
+) -> tuple[int, int, int, int]:
+    """(x, y, width, height) of the logo in output pixels, fully inside the frame.
+
+    The width is logo.width of the output width and the height keeps the
+    PNG's aspect ratio; a logo too tall for the frame (a tall PNG on a 16:9
+    output) is shrunk to fit. The position is then clamped so the whole logo
+    stays on screen.
+    """
+    width = min(out_w, max(1, round(logo.width * out_w)))
+    height = max(1, round(width * logo_h / logo_w))
+    if height > out_h:
+        height = out_h
+        width = min(out_w, max(1, round(height * logo_w / logo_h)))
+    x = min(max(0, round(logo.x * out_w)), out_w - width)
+    y = min(max(0, round(logo.y * out_h)), out_h - height)
+    return x, y, width, height
 
 
 @dataclass
@@ -97,6 +153,8 @@ class RenderRequest:
 
     banner_platform: Optional[str] = None
     banner_channel_url: Optional[str] = None
+    # Watermark burned over every frame, above captions, title and banner.
+    logo: Optional[LogoOverlay] = None
 
     include_audio: bool = True
     apply_padding: bool = True
@@ -520,7 +578,8 @@ class RenderingService:
         target_height: int,
         is_landscape: bool,
     ) -> list[Overlay]:
-        """Title card and channel banner, positioned per shot on the output timeline."""
+        """Title card and channel banner, positioned per shot on the output timeline,
+        then the logo watermark (last, so it is drawn on top)."""
         src_w, src_h = out_plan.source_width, out_plan.source_height
         overlays: list[Overlay] = []
         # Landscape overlays were sized for 1080p; scale them with the output.
@@ -549,6 +608,20 @@ class RenderingService:
                 overlays.append((banner[0], "(W-w)/2", per_shot_expr(out_plan, [
                     banner_y(s, src_w, src_h, target_width, target_height) for s in out_plan.shots
                 ])))
+        try:
+            logo = self._logo_overlay_image(request, target_width, target_height)
+        except Exception:
+            # Don't leave the title/banner images behind in the clips folder.
+            for overlay in overlays:
+                try:
+                    os.remove(overlay[0])
+                except OSError:
+                    pass
+            raise
+        if logo:
+            path, x, y = logo
+            # format=rgba keeps the PNG's alpha through the overlay; shown for the whole clip.
+            overlays.append((path, str(x), str(y), "", "format=rgba"))
         return overlays
 
     def _caption_filter(self, caption_path: Optional[str]) -> str:
@@ -578,7 +651,9 @@ class RenderingService:
             if len(overlay) == 5:
                 enable_expr, image_filter = overlay[3], overlay[4]
                 parts.append(f"[{index}:v]{image_filter}[img{index}]")
-                image, enable = f"[img{index}]", f":enable='{enable_expr}'"
+                image = f"[img{index}]"
+                # An empty enable expression means always on.
+                enable = f":enable='{enable_expr}'" if enable_expr else ""
             parts.append(
                 f"[{current}]{image}overlay=x='{x_expr}':y='{y_expr}':shortest=1{enable}[{label}]"
             )
@@ -600,6 +675,36 @@ class RenderingService:
         if not result:
             return None
         return path, result["width"], result["height"]
+
+    def _logo_overlay_image(
+        self, request: RenderRequest, target_width: int, target_height: int,
+    ) -> Optional[tuple[str, int, int]]:
+        """Scale the logo to its output size and write it next to the clip.
+
+        Returns (path, x, y) in output pixels, or None without a logo. The
+        copy is a temporary input (removed after the render), never the
+        user's own file. Opacity is baked into the copy's alpha channel.
+        """
+        logo = request.logo
+        if logo is None:
+            return None
+        with Image.open(logo.path) as source:
+            if source.format != "PNG":
+                raise RenderingError("The logo must be a PNG image")
+            if max(source.size) > MAX_LOGO_DIMENSION:
+                raise RenderingError("The logo image is too large")
+            image = source.convert("RGBA")
+        x, y, width, height = logo_geometry(logo, image.width, image.height, target_width, target_height)
+        image = image.resize((width, height), Image.Resampling.LANCZOS)
+        if logo.opacity < 1:
+            alpha = image.getchannel("A").point(lambda a: round(a * logo.opacity))
+            image.putalpha(alpha)
+        path = os.path.join(
+            os.path.dirname(request.output_path),
+            f"logo-{request.start_time_ms}-{request.end_time_ms}.png",
+        )
+        image.save(path, "PNG")
+        return path, x, y
 
     async def _generate_captions(
         self,
