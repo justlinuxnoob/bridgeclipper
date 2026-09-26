@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, ImageOff, ListPlus, Play, Send, TrendingUp, TriangleAlert } from 'lucide-react'
+import { FolderOpen, ImageOff, ListPlus, MessageSquareText, Play, Send, TrendingUp, TriangleAlert } from 'lucide-react'
 import { cn, formatTimecode, isMac, localFileUrl } from '../lib/utils'
 import { getApi } from '../lib/ipc'
 import { clipFilePath, loadThumbnail } from '../lib/thumbnails'
@@ -7,6 +7,7 @@ import type { ClipArtifact } from '../store/use-job-store'
 import { Checkbox } from './ui/Checkbox'
 import { Badge } from './ui/Badge'
 import { Skeleton } from './ui/Skeleton'
+import { PostCaptionsDialog } from './PostCaptionsDialog'
 
 // How the engine framed a vertical clip (its dominant layout).
 const LAYOUT_LABELS: Record<string, string> = {
@@ -49,6 +50,7 @@ export function ClipCard({
   const [hovering, setHovering] = useState(false)
   const [previewFailed, setPreviewFailed] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [showCaptions, setShowCaptions] = useState(false)
   const title = clip.summary || `Clip ${clip.clip_index + 1}`
   const score = (clip.virality_score * 10).toFixed(1)
   const clipVertical = aspect == null ? vertical : aspect < 1
@@ -212,8 +214,22 @@ export function ClipCard({
             </span>
           </Badge>
         )}
+        {clip.post_captions && (
+          <button
+            type="button"
+            onClick={() => setShowCaptions(true)}
+            title="Ready-to-post text for TikTok, YouTube Shorts and Instagram"
+            className="mt-1.5 inline-flex items-center gap-1 rounded-full text-2xs font-medium text-accent-hover transition-colors hover:text-ink [&_svg]:h-3 [&_svg]:w-3"
+          >
+            <MessageSquareText />
+            Post captions
+          </button>
+        )}
         {actionError && <p role="alert" className="mt-1.5 text-xs text-danger">{actionError}</p>}
       </div>
+      {showCaptions && clip.post_captions && (
+        <PostCaptionsDialog title={title} captions={clip.post_captions} onClose={() => setShowCaptions(false)} />
+      )}
     </article>
   )
 }

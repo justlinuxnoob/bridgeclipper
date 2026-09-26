@@ -31,6 +31,7 @@ from clip_engine.services.intelligence_planner import (
     ClipPlanSegment,
     IntelligencePlannerService,
 )
+from clip_engine.services.post_captions import post_text, write_post_captions
 from clip_engine.services.memory_monitor import (
     force_gc,
     log_memory_usage,
@@ -368,6 +369,14 @@ class AIClippingPipeline:
 
             capture_memory("after_planning")
 
+            # Post text for each platform is written while the clips render.
+            captions_task = None
+            if self.settings.post_captions_enabled:
+                captions_task = asyncio.create_task(write_post_captions(
+                    self.settings, clip_plan.segments, transcription_result.segments,
+                    download_result.metadata.title,
+                ))
+
             # Step 4: Render clips (smart framing, parallel)
             current_stage = "rendering"
             clips_dir = os.path.join(work_dir, "clips")
@@ -503,6 +512,17 @@ class AIClippingPipeline:
             )
 
             force_gc("after_rendering", job_id)
+
+            post_captions_cost = None
+            if captions_task:
+                if not captions_task.done():
+                    self._update_progress(
+                        job_id, JobStatus.RENDERING, 88, "Writing post captions...",
+                        clips_completed=total_clips, total_clips=total_clips,
+                    )
+                captions, post_captions_cost = await captions_task
+                for segment, caption in zip(clip_plan.segments, captions):
+                    segment.post_captions = caption
             capture_memory("after_rendering")
 
             # Step 5: Upload clips to S3 or save locally
@@ -578,6 +598,7 @@ class AIClippingPipeline:
                         render_fallback=segment.render_fallback,
                         description=segment.description,
                         chapters=self._chapter_dicts(segment),
+                        post_captions=segment.post_captions,
                     )
 
                 upload_tasks = [
@@ -625,6 +646,14 @@ class AIClippingPipeline:
                     "cost_incomplete": pc.cost_incomplete,
                 }
                 total_cost += pc.estimated_cost_usd
+
+            if post_captions_cost:
+                api_costs["post_captions"] = {
+                    "provider": post_captions_cost["provider"],
+                    "model": post_captions_cost["model"],
+                    "estimated_cost_usd": round(post_captions_cost["cost"], 6),
+                }
+                total_cost += post_captions_cost["cost"]
 
             if layout_vision_cost:
                 api_costs["layout_vision"] = {
@@ -869,6 +898,9 @@ class AIClippingPipeline:
                 subtitle_url = f"file://{os.path.abspath(srt_dest)}"
             if segment.description or segment.output_chapters:
                 self._write_upload_notes(os.path.join(output_dir, f"clip_{i:02d}.youtube.txt"), segment)
+            if segment.post_captions:
+                with open(os.path.join(output_dir, f"clip_{i:02d}.captions.txt"), "w", encoding="utf-8") as f:
+                    f.write(post_text(segment.post_captions))
 
             artifacts.append(ClipArtifact(
                 clip_index=i,
@@ -884,6 +916,7 @@ class AIClippingPipeline:
                 description=segment.description,
                 chapters=self._chapter_dicts(segment),
                 subtitle_url=subtitle_url,
+                post_captions=segment.post_captions,
             ))
 
         return artifacts

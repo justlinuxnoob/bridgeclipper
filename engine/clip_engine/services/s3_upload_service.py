@@ -53,6 +53,9 @@ class ClipArtifact:
     description: Optional[str] = None
     chapters: Optional[list[dict]] = None
     subtitle_url: Optional[str] = None
+    # {"tiktok": {caption, hashtags}, "youtube": {title, description, tags},
+    #  "instagram": {caption, hashtags}}; None when post text was unavailable.
+    post_captions: Optional[dict] = None
 
 
 @dataclass

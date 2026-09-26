@@ -662,6 +662,8 @@ class Settings(BaseSettings):
     # A model alias ("opus", "sonnet") or a full model name.
     claude_code_model: str = "opus"
     claude_code_timeout_seconds: float = 600.0
+    # Per-platform post text (TikTok, YouTube Shorts, Instagram) for each clip.
+    post_captions_enabled: bool = True
 
     # Who transcribes: "openrouter" (model from clipping_mode), "groq" (Whisper
     # Turbo on Groq's free tier, falling back to OpenRouter Whisper when the

@@ -138,6 +138,8 @@ export interface BridgeClipAPI {
     /** Opens a local path with its default app, or an http(s) URL in the browser. */
     openPath: (path: string) => Promise<boolean>
     showItemInFolder: (path: string) => Promise<boolean>
+    /** Copies text with the system clipboard (web clipboard permissions are denied). */
+    copyText: (text: string) => Promise<boolean>
   }
   dialog: {
     selectVideo: () => Promise<string | null>
@@ -240,7 +242,8 @@ const api: BridgeClipAPI = {
   },
   shell: {
     openPath: (path) => ipcRenderer.invoke('shell:openPath', path),
-    showItemInFolder: (path) => ipcRenderer.invoke('shell:showItemInFolder', path)
+    showItemInFolder: (path) => ipcRenderer.invoke('shell:showItemInFolder', path),
+    copyText: (text) => ipcRenderer.invoke('clipboard:writeText', text)
   },
   dialog: {
     selectVideo: () => ipcRenderer.invoke('dialog:selectVideo')

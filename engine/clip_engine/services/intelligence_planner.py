@@ -65,6 +65,8 @@ class ClipPlanSegment:
     # timeline, and the SRT sidecar path.
     output_chapters: list[tuple[int, str]] = field(default_factory=list)
     subtitle_path: Optional[str] = None
+    # Filled in alongside rendering: per-platform post text (see post_captions).
+    post_captions: Optional[dict] = None
 
 
 @dataclass

@@ -10,6 +10,15 @@ export interface ClipArtifact {
   tags: string[]
   /** Set when smart framing failed and a letterbox fallback produced the clip. */
   render_fallback: string | null
+  /** Ready-to-post text per platform; null when it could not be written. */
+  post_captions: PostCaptions | null
+}
+
+export interface SocialPostText { caption: string; hashtags: string[] }
+export interface PostCaptions {
+  tiktok: SocialPostText
+  youtube: { title: string; description: string; tags: string[] }
+  instagram: SocialPostText
 }
 
 export interface JobOutput {
@@ -147,6 +156,27 @@ function safeMetrics(value: unknown): Record<string, unknown> | null {
 }
 
 /** Validate external and persisted pipeline output before it reaches React. */
+function textList(value: unknown, count: number, length: number): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '').slice(0, count).map((item) => item.slice(0, length)) : []
+}
+
+function parsePostCaptions(value: unknown): PostCaptions | null {
+  if (!record(value) || !record(value.tiktok) || !record(value.youtube) || !record(value.instagram)) return null
+  const social = (block: Record<string, unknown>): SocialPostText => ({
+    caption: boundedText(block.caption, 2200) ?? '',
+    hashtags: textList(block.hashtags, 5, 64)
+  })
+  return {
+    tiktok: social(value.tiktok),
+    youtube: {
+      title: boundedText(value.youtube.title, 100) ?? '',
+      description: boundedText(value.youtube.description, 5000) ?? '',
+      tags: textList(value.youtube.tags, 10, 100)
+    },
+    instagram: social(value.instagram)
+  }
+}
+
 export function parseJobOutput(value: unknown): JobOutput | null {
   if (!record(value) || !Array.isArray(value.clips) || value.clips.length > 1000) return null
   const clips: ClipArtifact[] = []
@@ -168,7 +198,8 @@ export function parseJobOutput(value: unknown): JobOutput | null {
       layout_type: typeof item.layout_type === 'string' && ['talking_head', 'two_shot', 'screen_cam', 'screen', 'fit', 'center_crop'].includes(item.layout_type) ? item.layout_type : '',
       summary: boundedText(item.summary, 2048),
       tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string').slice(0, 50).map((tag) => tag.slice(0, 64)) : [],
-      render_fallback: boundedText(item.render_fallback, 256)
+      render_fallback: boundedText(item.render_fallback, 256),
+      post_captions: parsePostCaptions(item.post_captions)
     })
   }
   return {

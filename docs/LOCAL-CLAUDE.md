@@ -7,9 +7,15 @@ This branch lets BridgeClip run with no per-token AI billing:
 | Clip planning | Claude Code CLI (`claude -p`) on your Claude subscription | $0 |
 | Transcription | Groq free tier, Whisper Large V3 Turbo (~8 h of audio a day) | $0 |
 | Transcription fallback | OpenRouter Whisper Turbo, only if an OpenRouter key is saved | ~$0.01 per audio hour |
+| Post captions (TikTok, YouTube Shorts, Instagram) | Claude Code, written while clips render | $0 |
 | Framing | Local face tracking (layout vision needs an OpenRouter key) | $0 |
 
 Choose backends in **Settings → AI engines**. Keys are only required for the backends you pick.
+
+Each clip gets ready-to-post text per platform: in the Library (**Post captions** button with copy buttons),
+in `job_output.json`, and as `clip_NN.captions.txt` next to the video.
+
+New machine? See [CACHYOS-SETUP.md](CACHYOS-SETUP.md).
 
 ## Setup (Linux)
 

@@ -186,3 +186,17 @@ test('Twitch VOD links canonicalize while other Twitch pages are rejected', () =
   assert.match(html, /Public, completed videos only/)
   assert.doesNotMatch(html, /<img/)
 })
+
+test('job output keeps bounded per-platform post captions and drops malformed ones', () => {
+  const clip = (post_captions) => ({ clip_index: 0, s3_url: 'file:///c.mp4', duration_ms: 1, start_time_ms: 0, end_time_ms: 1, virality_score: 0.5, post_captions })
+  const captions = {
+    tiktok: { caption: 'Why astronauts fly a toy', hashtags: ['#space', 7, '', '#nasa'] },
+    youtube: { title: 'T'.repeat(300), description: 'Context.', tags: ['NASA'] },
+    instagram: { caption: 'The toy floats.', hashtags: [] }
+  }
+  const [parsed] = parseJobOutput({ clips: [clip(captions)] }).clips
+  assert.deepEqual(parsed.post_captions.tiktok, { caption: 'Why astronauts fly a toy', hashtags: ['#space', '#nasa'] })
+  assert.equal(parsed.post_captions.youtube.title.length, 100)
+  assert.equal(parseJobOutput({ clips: [clip({ tiktok: {} })] }).clips[0].post_captions, null)
+  assert.equal(parseJobOutput({ clips: [clip(undefined)] }).clips[0].post_captions, null)
+})

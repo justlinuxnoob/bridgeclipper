@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
 import { LOCAL_WHISPER_MODELS, PLANNER_BACKENDS, TRANSCRIPTION_BACKENDS, loadSettings, missingProviderKeys, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
 import { ensureOutputDir, getJobHistory, getJobOutput, generateThumbnail } from './file-manager'
@@ -255,6 +255,13 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const thumbnail = await generateThumbnail(videoPath, seekSeconds)
     if (thumbnail) authorizeMedia(thumbnail)
     return thumbnail
+  })
+
+  // The renderer's navigator.clipboard is blocked with every other web permission.
+  handle('clipboard:writeText', (_event, text: unknown) => {
+    if (typeof text !== 'string' || text.length > 20_000) throw new Error('Invalid clipboard text')
+    clipboard.writeText(text)
+    return true
   })
 
   handle('shell:openPath', async (_event, path: unknown) => {
