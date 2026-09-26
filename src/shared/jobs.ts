@@ -1,4 +1,5 @@
 import type { JobOutput } from './job-output'
+import type { LogoOverlay } from './logo'
 
 /** Options for one clipping run, as the Create wizard submits them. */
 export interface ClipJobRequest {
@@ -23,6 +24,8 @@ export interface ClipJobRequest {
   endTimeSeconds: number | null
   bannerPlatform: string | null
   bannerChannelUrl: string | null
+  /** Logo watermark burned into every clip; omitted when off. */
+  logo?: LogoOverlay | null
 }
 
 /** How many clipping runs the main process lets run at once; the rest wait in a queue. */

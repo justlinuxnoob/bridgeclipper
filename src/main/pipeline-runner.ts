@@ -360,6 +360,7 @@ export function startClipJob(
     autoClipCount: config.autoClipCount,
     aspectRatio: config.aspectRatio,
     captionPreset: config.captionPreset,
+    logo: Boolean(config.logo),
     envKeys: Object.keys(envVars),
     isPackaged: app.isPackaged
   })
@@ -408,6 +409,16 @@ export function startClipJob(
     video_speed: config.videoSpeed ?? 1,
     include_captions: config.includeCaptions,
     caption_preset: config.captionPreset,
+    // Only sent when on, so a job without a logo sends exactly what it did before.
+    ...(config.logo ? {
+      logo: {
+        path: config.logo.path,
+        x: config.logo.x,
+        y: config.logo.y,
+        width: config.logo.width,
+        opacity: config.logo.opacity ?? 1
+      }
+    } : {}),
     keyterms: vocabularyTerms(settings.customVocabulary),
     start_time_seconds: config.startTimeSeconds,
     end_time_seconds: config.endTimeSeconds,

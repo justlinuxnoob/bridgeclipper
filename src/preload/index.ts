@@ -14,6 +14,7 @@ import type { ClipJobRequest, JobSnapshot } from '../shared/jobs'
 import type { Automation, AutomationUpdate, AutomationTikTokReview, AutomationTikTokReviewUpdate } from '../shared/automations'
 import type { OpenRouterCatalog } from '../shared/openrouter-models'
 import type { UpdateState } from '../shared/updates'
+import type { LogoPreview } from '../shared/logo'
 
 export interface ClipSettings {
   openrouterConfigured: boolean
@@ -25,7 +26,11 @@ export interface ClipSettings {
   plannerBackend: 'openrouter' | 'claude_code'
   transcriptionBackend: 'openrouter' | 'groq' | 'local'
   localWhisperModel: 'large-v3-turbo-q5_0' | 'small'
+  /** Saved default logo (managed copy under userData), or ''. Changed only through `logo`. */
+  logoPath: string
 }
+
+export type { LogoPreview } from '../shared/logo'
 
 export type { ClipJobRequest, JobSnapshot } from '../shared/jobs'
 
@@ -77,6 +82,13 @@ export interface BridgeClipAPI {
     save: (settings: ClipSettings) => Promise<ClipSettings>
     replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey' | 'groqApiKey', value: string) => Promise<ClipSettings>
     selectOutputDir: () => Promise<string | null>
+  }
+  logo: {
+    /** The saved logo with a data: URL for previews, or null. */
+    load: () => Promise<LogoPreview | null>
+    /** Opens a PNG picker; rejects with a readable message for files without transparency or over 5 MB. */
+    select: () => Promise<LogoPreview | null>
+    remove: () => Promise<ClipSettings>
   }
   zernio: {
     overview: () => Promise<ZernioOverview>
@@ -198,6 +210,11 @@ const api: BridgeClipAPI = {
     save: (settings) => ipcRenderer.invoke('settings:save', settings),
     replaceApiKey: (key, value) => ipcRenderer.invoke('settings:replaceApiKey', key, value),
     selectOutputDir: () => ipcRenderer.invoke('settings:selectOutputDir')
+  },
+  logo: {
+    load: () => ipcRenderer.invoke('logo:load'),
+    select: () => ipcRenderer.invoke('logo:select'),
+    remove: () => ipcRenderer.invoke('logo:remove')
   },
   zernio: {
     overview: () => ipcRenderer.invoke('zernio:overview'),

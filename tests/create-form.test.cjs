@@ -12,6 +12,8 @@ const bundled = buildSync({
       export { useSettingsStore } from './src/renderer/store/use-settings-store';
       export { useDraftStore } from './src/renderer/store/use-draft-store';
       export { SourcePicker, isValidSourceLink } from './src/renderer/components/SourcePicker';
+      export { LogoSection, LogoPlacementEditor } from './src/renderer/components/LogoPlacementEditor';
+      export { useLogoStore } from './src/renderer/store/use-logo-store';
       export { framingProblem, sourceAnalysisNotice } from './src/renderer/components/ClipList';
       export { parseJobOutput } from './src/shared/job-output';
       export { twitchVodId, normalizeVideoSource } from './src/shared/video-source';`,
@@ -199,4 +201,39 @@ test('job output keeps bounded per-platform post captions and drops malformed on
   assert.equal(parsed.post_captions.youtube.title.length, 100)
   assert.equal(parseJobOutput({ clips: [clip({ tiktok: {} })] }).clips[0].post_captions, null)
   assert.equal(parseJobOutput({ clips: [clip(undefined)] }).clips[0].post_captions, null)
+})
+
+test('the logo is sent only when one is saved and switched on', () => {
+  const { useDraftStore, buildJobRequest } = form.exports
+  const draft = { ...useDraftStore.getState(), source: 'https://example.com/video' }
+  const trim = { start: null, end: null }
+  assert.equal('logo' in buildJobRequest(draft, trim), false)
+  assert.equal('logo' in buildJobRequest(draft, trim, null), false)
+  assert.equal('logo' in buildJobRequest({ ...draft, logoEnabled: false }, trim, '/data/logos/logo.png'), false)
+  const request = buildJobRequest({ ...draft, logoPlacement: { x: 0.1, y: 0.2, width: 0.3 }, logoOpacity: 0.7 }, trim, '/data/logos/logo.png')
+  assert.deepEqual(request.logo, { path: '/data/logos/logo.png', x: 0.1, y: 0.2, width: 0.3, opacity: 0.7 })
+  // Default placement: top-right, 15% wide, 4% margin.
+  assert.equal(draft.logoEnabled, true)
+  assert.equal(draft.logoPlacement.width, 0.15)
+  assert.ok(Math.abs(draft.logoPlacement.x - 0.81) < 1e-9)
+})
+
+test('the logo section offers a picker, and the editor draws the frame, logo and platform guides', () => {
+  const { LogoSection, LogoPlacementEditor, useDraftStore } = form.exports
+  const empty = renderToStaticMarkup(React.createElement(LogoSection, { draft: useDraftStore.getState(), update() {} }))
+  assert.match(empty, /Choose logo PNG/)
+  assert.match(empty, /aria-checked="false"[^>]*disabled/)
+
+  const logo = { path: '/data/logos/logo.png', width: 200, height: 100, dataUrl: 'data:image/png;base64,AAAA' }
+  const editor = (props) => renderToStaticMarkup(React.createElement(LogoPlacementEditor, { logo, placement: { x: 0.81, y: 0.02, width: 0.15 }, opacity: 0.6, onChange() {}, ...props }))
+  const html = editor({})
+  assert.match(html, /data-testid="logo-frame"/)
+  assert.match(html, /aspect-ratio:9 \/ 16/)
+  assert.equal((html.match(/border-dashed/g) ?? []).length, 2, 'right-edge and bottom platform guides')
+  assert.match(html, /left:81(\.\d+)?%;top:2%;width:15%/)
+  assert.match(html, /src="data:image\/png;base64,AAAA"[^>]*style="opacity:0.6"/)
+  assert.match(html, /cursor-nwse-resize/)
+  const landscape = editor({ landscape: true })
+  assert.match(landscape, /aspect-ratio:16 \/ 9/)
+  assert.doesNotMatch(landscape, /border-dashed/)
 })

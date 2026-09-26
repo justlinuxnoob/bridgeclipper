@@ -24,6 +24,8 @@ export interface AppSettings {
   transcriptionBackend: TranscriptionBackend
   /** whisper.cpp ggml model used when transcriptionBackend is 'local'. */
   localWhisperModel: LocalWhisperModel
+  /** Default logo watermark: a managed copy under userData/logos, or '' for none. Set only by the logo picker. */
+  logoPath: string
 }
 
 export const PLANNER_BACKENDS = ['openrouter', 'claude_code'] as const
@@ -34,7 +36,7 @@ export const LOCAL_WHISPER_MODELS = ['large-v3-turbo-q5_0', 'small'] as const
 export type LocalWhisperModel = (typeof LOCAL_WHISPER_MODELS)[number]
 
 export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey' | 'groqApiKey'
-export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'plannerBackend' | 'transcriptionBackend' | 'localWhisperModel'> & {
+export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'plannerBackend' | 'transcriptionBackend' | 'localWhisperModel' | 'logoPath'> & {
   openrouterConfigured: boolean
   zernioConfigured: boolean
   groqConfigured: boolean
@@ -52,7 +54,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   customVocabulary: '',
   plannerBackend: 'openrouter',
   transcriptionBackend: 'openrouter',
-  localWhisperModel: 'large-v3-turbo-q5_0'
+  localWhisperModel: 'large-v3-turbo-q5_0',
+  logoPath: ''
 }
 
 const SETTINGS_VERSION = 7
@@ -70,6 +73,7 @@ interface PersistedSettings {
   plannerBackend?: PlannerBackend
   transcriptionBackend?: TranscriptionBackend
   localWhisperModel?: LocalWhisperModel
+  logoPath?: string
 }
 
 function ensureDir(dir: string): string {
@@ -97,8 +101,10 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
     customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n'),
     plannerBackend: oneOf(PLANNER_BACKENDS, settings.plannerBackend, DEFAULT_SETTINGS.plannerBackend),
     transcriptionBackend: oneOf(TRANSCRIPTION_BACKENDS, settings.transcriptionBackend, DEFAULT_SETTINGS.transcriptionBackend),
-    localWhisperModel: oneOf(LOCAL_WHISPER_MODELS, settings.localWhisperModel, DEFAULT_SETTINGS.localWhisperModel)
+    localWhisperModel: oneOf(LOCAL_WHISPER_MODELS, settings.localWhisperModel, DEFAULT_SETTINGS.localWhisperModel),
+    logoPath: (settings.logoPath ?? DEFAULT_SETTINGS.logoPath).trim()
   }
+  if (normalized.logoPath && !isAbsolute(normalized.logoPath)) normalized.logoPath = ''
   normalized.outputDirectory ||= DEFAULT_SETTINGS.outputDirectory
   normalized.pythonPath ||= DEFAULT_SETTINGS.pythonPath
   if (!isAbsolute(normalized.outputDirectory)) throw new Error('Settings folders must be absolute paths')
@@ -177,7 +183,8 @@ export function loadSettings(): AppSettings {
       customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary,
       plannerBackend: oneOf(PLANNER_BACKENDS, raw.plannerBackend, DEFAULT_SETTINGS.plannerBackend),
       transcriptionBackend: oneOf(TRANSCRIPTION_BACKENDS, raw.transcriptionBackend, DEFAULT_SETTINGS.transcriptionBackend),
-      localWhisperModel: oneOf(LOCAL_WHISPER_MODELS, raw.localWhisperModel, DEFAULT_SETTINGS.localWhisperModel)
+      localWhisperModel: oneOf(LOCAL_WHISPER_MODELS, raw.localWhisperModel, DEFAULT_SETTINGS.localWhisperModel),
+      logoPath: typeof raw.logoPath === 'string' ? raw.logoPath : DEFAULT_SETTINGS.logoPath
     })
 
     if (needsMigration && canEncrypt()) writeSettings(settings)
@@ -201,7 +208,8 @@ function writeSettings(settings: AppSettings): void {
     customVocabulary: settings.customVocabulary,
     plannerBackend: settings.plannerBackend,
     transcriptionBackend: settings.transcriptionBackend,
-    localWhisperModel: settings.localWhisperModel
+    localWhisperModel: settings.localWhisperModel,
+    logoPath: settings.logoPath
   }
 
   let fd: number | undefined
@@ -232,6 +240,7 @@ export function publicSettings(settings: AppSettings): PublicSettings {
     plannerBackend: settings.plannerBackend,
     transcriptionBackend: settings.transcriptionBackend,
     localWhisperModel: settings.localWhisperModel,
+    logoPath: settings.logoPath,
     openrouterConfigured: Boolean(settings.openrouterApiKey),
     zernioConfigured: Boolean(settings.zernioApiKey),
     groqConfigured: Boolean(settings.groqApiKey)
@@ -249,6 +258,11 @@ export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory
     transcriptionBackend: update.transcriptionBackend ?? current.transcriptionBackend,
     localWhisperModel: update.localWhisperModel ?? current.localWhisperModel
   }))
+}
+
+/** Saves the default logo (the logo picker's managed copy) or clears it with ''. */
+export function saveLogoPath(logoPath: string): PublicSettings {
+  return publicSettings(saveSettings({ ...loadSettings(), logoPath }))
 }
 
 /**

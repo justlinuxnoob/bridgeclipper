@@ -28,7 +28,7 @@ const jobOutput = loadShared('job-output.ts')
 const videoSource = loadShared('video-source.ts')
 const runHistory = loadSource('run-history.ts', { '../shared/video-source': videoSource })
 const security = loadSource('security.ts', { electron: {}, '../shared/brand': loadShared('brand.ts') })
-const { validateJobConfig } = loadSource('validation.ts', { './security': security, '../shared/video-source': videoSource, '../shared/job-contract': jobContract, '../shared/openrouter-models': loadShared('openrouter-models.ts') })
+const { validateJobConfig } = loadSource('validation.ts', { './security': security, '../shared/video-source': videoSource, '../shared/job-contract': jobContract, '../shared/openrouter-models': loadShared('openrouter-models.ts'), '../shared/logo': loadShared('logo.ts'), './logo': { assertManagedLogo() { throw new Error('Invalid logo') } } })
 
 test('development checks the staged FFmpeg that the clipping engine uses', async () => {
   const binDir = path.join(__dirname, '../../engine-bin')
@@ -187,6 +187,7 @@ test('the native picker authorizes media and shell opening rejects aliased appli
       './security': security,
       './network-policy': {},
       './validation': {},
+      './logo': {},
       './openrouter-models': {},
       './tools': {},
       './zernio/service': {},

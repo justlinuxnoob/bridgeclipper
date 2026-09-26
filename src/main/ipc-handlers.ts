@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
-import { LOCAL_WHISPER_MODELS, PLANNER_BACKENDS, TRANSCRIPTION_BACKENDS, loadSettings, missingProviderKeys, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
+import { LOCAL_WHISPER_MODELS, PLANNER_BACKENDS, TRANSCRIPTION_BACKENDS, loadSettings, missingProviderKeys, publicSettings, replaceApiKey, saveLogoPath, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
 import { ensureOutputDir, getJobHistory, getJobOutput, generateThumbnail } from './file-manager'
 import {
   getEnginePath,
@@ -16,6 +16,7 @@ import { logger, getLogFilePath } from './logger'
 import { assertAbsolutePath, assertMediaPath, assertTrustedSender, authorizeMedia, isTrustedExternalUrl, isWebUrl, isWithinDirectory, openAuthorizedMedia } from './security'
 import { assertPublicWebUrl } from './network-policy'
 import { validateJobConfig } from './validation'
+import { importLogo, loadLogoPreview, pruneLogos } from './logo'
 import { getModelCatalog, resolveAdvancedModels } from './openrouter-models'
 import { randomUUID } from 'crypto'
 import { resolveBinary, supportsCaptionFilter } from './tools'
@@ -72,6 +73,34 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     if (settings.outputDirectory !== current.outputDirectory && !selectedOutputDirectories.has(settings.outputDirectory)) throw new Error('Choose the output folder with the folder picker')
     if (app.isPackaged && settings.pythonPath !== current.pythonPath) throw new Error('Runtime paths cannot be changed in packaged builds')
     return savePublicSettings(settings)
+  })
+
+  // Logo watermark. Only the picker sets the saved logo; settings:save cannot.
+  // Copies no longer saved or used by a queued/running job are deleted.
+  const logosInUse = (): (string | undefined)[] => {
+    const live = liveJobIds()
+    return listJobs().filter((job) => live.has(job.id)).map((job) => job.request.logo?.path)
+  }
+  handle('logo:load', () => loadLogoPreview(loadSettings().logoPath))
+  handle('logo:select', async () => {
+    const window = getMainWindow()
+    if (!window) return null
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openFile'],
+      title: 'Choose a Logo',
+      filters: [{ name: 'PNG images', extensions: ['png'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const logo = importLogo(result.filePaths[0])
+    try { saveLogoPath(logo.path) } catch (error) { pruneLogos([loadSettings().logoPath, ...logosInUse()]); throw error }
+    pruneLogos([logo.path, ...logosInUse()])
+    logger.info('logo.selected', { width: logo.width, height: logo.height })
+    return logo
+  })
+  handle('logo:remove', () => {
+    const saved = saveLogoPath('')
+    pruneLogos(logosInUse())
+    return saved
   })
 
   handle('settings:replaceApiKey', (_event, key: ApiKeyName, value: string) => {

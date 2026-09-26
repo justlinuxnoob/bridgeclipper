@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { defaultLogoPlacement, type LogoPlacement } from '../../shared/logo'
 
 /** The Create wizard's steps, in order. */
 export type WizardStep = 'video' | 'format' | 'clips' | 'captions' | 'review'
@@ -33,6 +34,11 @@ export interface ClipDraft {
   maxClips: number
   includeCaptions: boolean
   captionPreset: string
+  /** Burn the saved logo into this job's clips (when one is saved). */
+  logoEnabled: boolean
+  /** Normalized to the output frame; see shared/logo. */
+  logoPlacement: LogoPlacement
+  logoOpacity: number
   trimOpen: boolean
   trimStart: string
   trimEnd: string
@@ -65,6 +71,9 @@ export const useDraftStore = create<DraftState>((set) => ({
   maxClips: 5,
   includeCaptions: true,
   captionPreset: 'pop',
+  logoEnabled: true,
+  logoPlacement: defaultLogoPlacement(1),
+  logoOpacity: 1,
   trimOpen: false,
   trimStart: '',
   trimEnd: '',

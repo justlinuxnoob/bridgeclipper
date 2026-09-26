@@ -13,6 +13,7 @@ Usage:
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -284,6 +285,7 @@ async def run(config: dict) -> bool:
         end_time_seconds=config.get("end_time_seconds"),
         banner_platform=config.get("banner_platform"),
         banner_channel_url=config.get("banner_channel_url"),
+        logo=config.get("logo"),
         keyterms=config.get("keyterms") or None,
     )
 
@@ -388,6 +390,22 @@ def validate_config(config: object) -> dict:
         any(not isinstance(term, str) or not term.strip() or len(term) > 49 for term in keyterms)
     ):
         raise ValueError("Invalid keyterms")
+    logo = config.get("logo")
+    if logo is not None:
+        # The desktop copies the logo into its own data folder; only a local PNG
+        # with in-range placement is accepted.
+        if not isinstance(logo, dict) or set(logo) - {"path", "x", "y", "width", "opacity"}:
+            raise ValueError("Invalid logo")
+        path = logo.get("path")
+        if (not isinstance(path, str) or len(path) > 8192 or "\0" in path or not os.path.isabs(path)
+                or not path.lower().endswith(".png") or not os.path.isfile(path)):
+            raise ValueError("Invalid logo file")
+        for field in ("x", "y", "width", "opacity"):
+            value = logo.get(field, 1.0 if field == "opacity" else None)
+            if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"Invalid logo {field}")
+        if logo["width"] <= 0:
+            raise ValueError("Invalid logo width")
     ranges = config.get("duration_ranges")
     if ranges is not None and (
         not isinstance(ranges, list) or len(ranges) > len(DURATION_RANGE_IDS) or

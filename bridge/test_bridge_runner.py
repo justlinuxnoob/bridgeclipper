@@ -79,6 +79,58 @@ class BridgeTests(unittest.TestCase):
             with self.subTest(speed=speed), self.assertRaises(ValueError):
                 bridge.validate_config(self.config(video_speed=speed))
 
+    def test_logo_validation(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "logo.png")
+            with open(path, "wb") as handle:
+                handle.write(b"\x89PNG\r\n\x1a\n")
+            logo = {"path": path, "x": 0.81, "y": 0.02, "width": 0.15, "opacity": 0.8}
+            self.assertEqual(bridge.validate_config(self.config(logo=logo))["logo"], logo)
+            self.assertNotIn("logo", bridge.validate_config(self.config()))
+            self.assertIsNone(bridge.validate_config(self.config(logo=None))["logo"])
+            no_opacity = {key: value for key, value in logo.items() if key != "opacity"}
+            self.assertEqual(bridge.validate_config(self.config(logo=no_opacity))["logo"], no_opacity)
+            for bad in (
+                "logo.png", [], {**logo, "x": -0.1}, {**logo, "y": 1.1}, {**logo, "width": 0},
+                {**logo, "width": True}, {**logo, "opacity": float("nan")}, {**logo, "x": "0.5"},
+                {**logo, "extra": 1}, {**logo, "path": "logo.png"}, {**logo, "path": os.path.join(root, "missing.png")},
+                {**logo, "path": root}, {**logo, "path": os.path.join(root, "logo.jpg")}, {"path": path},
+            ):
+                with self.subTest(logo=bad), self.assertRaises(ValueError):
+                    bridge.validate_config(self.config(logo=bad))
+
+    def test_logo_reaches_the_job_request(self):
+        seen = {}
+
+        class Pipeline:
+            def __init__(self, **kwargs): pass
+            async def process_video(self, request):
+                return types.SimpleNamespace(status="failed", output=None, error=RuntimeError("stop"), job_id="job-123")
+
+        def request(**kwargs):
+            seen.update(kwargs)
+            return types.SimpleNamespace(**kwargs)
+
+        settings = types.SimpleNamespace(openrouter_api_key="key", planner_backend="openrouter", transcription_backend="openrouter")
+        modules = {
+            "network_guard": types.SimpleNamespace(install=lambda: None),
+            "clip_engine.logging_safety": types.SimpleNamespace(install_safe_logging=lambda: None),
+            "clip_engine.bridge_contract": types.SimpleNamespace(BRIDGE_CONTRACT_VERSION=2),
+            "clip_engine.config": types.SimpleNamespace(get_settings=lambda: settings, get_caption_preset=lambda name: None),
+            "clip_engine.services.ai_clipping_pipeline": types.SimpleNamespace(
+                AIClippingPipeline=Pipeline, ClippingJobRequest=request, JobStatus=types.SimpleNamespace(COMPLETED="completed")),
+        }
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "logo.png")
+            open(path, "wb").close()
+            logo = {"path": path, "x": 0.1, "y": 0.2, "width": 0.3}
+            with patch.dict(sys.modules, modules), patch.dict(os.environ, {}), redirect_stdout(io.StringIO()):
+                asyncio.run(bridge.run(self.config(logo=logo)))
+                self.assertEqual(seen["logo"], logo)
+                seen.clear()
+                asyncio.run(bridge.run(self.config()))
+                self.assertIsNone(seen["logo"])
+
     def test_rejects_invalid_config_without_importing_bridgeclip(self):
         for value in ([], None, "config", self.config(contract_version=None), self.config(contract_version=1), self.config(layout_vision_enabled=None), self.config(job_id="../escape"), self.config(video_url="file:///etc/passwd"), self.config(max_clips=True), self.config(aspect_ratio="1:1"), self.config(layout_style="unknown"), self.config(pacing="unknown"), self.config(clipping_mode="unknown"), self.config(duration_ranges=["unknown"])):
             with self.subTest(value=value), self.assertRaises(ValueError):

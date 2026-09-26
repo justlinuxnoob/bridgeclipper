@@ -30,6 +30,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   plannerBackend: 'openrouter',
   transcriptionBackend: 'openrouter',
   localWhisperModel: 'large-v3-turbo-q5_0',
+  logoPath: '',
   loaded: false,
   saving: false,
   toolStatus: null,
@@ -97,7 +98,8 @@ function pickSettings(s: ClipSettings): ClipSettings {
     customVocabulary: s.customVocabulary,
     plannerBackend: s.plannerBackend,
     transcriptionBackend: s.transcriptionBackend,
-    localWhisperModel: s.localWhisperModel
+    localWhisperModel: s.localWhisperModel,
+    logoPath: s.logoPath
   }
 }
 
