@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUpRight, BookA, Check, ChevronDown, Cpu, FolderOpen, Github, Info, KeyRound, Loader2, RefreshCw, ScrollText } from 'lucide-react'
+import { ArrowUpRight, BookA, Bot, Check, ChevronDown, Cpu, FolderOpen, Github, Info, KeyRound, Loader2, RefreshCw, ScrollText } from 'lucide-react'
 import { useSettingsStore } from '../store/use-settings-store'
 import { useApiKeyDrafts } from '../hooks/use-api-key-drafts'
 import { getApi } from '../lib/ipc'
@@ -16,14 +16,16 @@ import { Field, TextArea, TextInput } from '../components/ui/Field'
 import { Badge, StatusDot } from '../components/ui/Badge'
 import { IconTile } from '../components/ui/IconTile'
 import { Callout } from '../components/ui/Callout'
+import { Segmented } from '../components/ui/Segmented'
+import { SettingRow } from '../components/ui/SettingRow'
 import { UpdatesRow } from '../components/Updates'
 
-type SectionId = 'keys' | 'vocabulary' | 'output' | 'system' | 'about'
+type SectionId = 'keys' | 'engines' | 'vocabulary' | 'output' | 'system' | 'about'
 type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+  const { outputDirectory, pythonPath, customVocabulary, plannerBackend, openrouterConfigured, zernioConfigured, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -55,6 +57,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
 
   const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone }[] = [
     { id: 'keys', label: 'API keys', icon: <KeyRound />, tone: keysMissing ? 'warning' : 'success' },
+    { id: 'engines', label: 'AI engines', icon: <Bot />, tone: 'idle' },
     { id: 'vocabulary', label: 'Vocabulary', icon: <BookA />, tone: 'idle' },
     { id: 'output', label: 'Output', icon: <FolderOpen />, tone: 'idle' },
     { id: 'system', label: 'System check', icon: <Cpu />, tone: !toolsChecked ? 'idle' : toolsMissing ? 'danger' : 'success' },
@@ -70,7 +73,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   }, [showUpdates])
 
   const checks: { label: string; ok: boolean | null; detail: string; section: SectionId; optional?: boolean; tone?: 'danger' }[] = [
-    { label: 'OpenRouter', ok: openrouterConfigured, detail: openrouterConfigured ? 'Key saved' : 'Needed to transcribe and pick clips', section: 'keys' },
+    { label: 'OpenRouter', ok: openrouterConfigured, detail: openrouterConfigured ? 'Key saved' : plannerBackend === 'claude_code' ? 'Needed to transcribe' : 'Needed to transcribe and pick clips', section: 'keys' },
     { label: 'Tools', ok: toolsChecked ? toolsMissing === 0 : null, detail: !toolsChecked ? (checkingTools ? 'Checking…' : 'Not checked') : toolsMissing ? `${toolsMissing} missing` : 'All installed', section: 'system', tone: 'danger' },
     { label: 'Zernio', ok: zernioConfigured, detail: zernioConfigured ? 'Posting on' : 'Optional, for posting', section: 'keys', optional: true }
   ]
@@ -168,6 +171,34 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   getKeyUrl={PROVIDER_LINKS.zernio}
                 />
               </KeyRow>
+            </div>
+          </Section>
+
+          <Section id="engines">
+            <PanelHeader
+              icon={<IconTile><Bot /></IconTile>}
+              title="AI engines"
+              description="Choose who does each step. Claude Code uses your Claude subscription through the `claude` CLI on this computer."
+            />
+            <div className="mt-4 space-y-2">
+              <SettingRow
+                title="Clip planner"
+                description={plannerBackend === 'claude_code'
+                  ? 'Runs `claude -p` with Opus, no tools, in an empty folder. Plans from the transcript only; silent videos still need OpenRouter.'
+                  : 'Planned with Claude Opus 5.5 via OpenRouter, billed per run.'}
+                control={
+                  <Segmented
+                    label="Clip planner"
+                    size="sm"
+                    value={plannerBackend}
+                    onChange={(value) => void commit({ plannerBackend: value })}
+                    options={[
+                      { value: 'openrouter', label: 'OpenRouter' },
+                      { value: 'claude_code', label: 'Claude Code (subscription)' }
+                    ]}
+                  />
+                }
+              />
             </div>
           </Section>
 

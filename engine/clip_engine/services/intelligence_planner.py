@@ -20,7 +20,9 @@ from typing import Any, Literal, Optional
 
 import httpx
 
+from clip_engine.error_policy import CLAUDE_CODE_MESSAGES
 from clip_engine.config import DURATION_RANGES, get_settings, is_longform, resolve_clip_duration_bounds
+from clip_engine.services.claude_code import ClaudeCodeError, run_claude_json
 from clip_engine.services.openrouter import (
     OpenRouterError,
     apply_reasoning,
@@ -228,7 +230,7 @@ class IntelligencePlannerService:
         self.settings = get_settings()
         self._http_client: Optional[httpx.AsyncClient] = None
         
-        if not self.settings.openrouter_api_key:
+        if self.settings.planner_backend == "openrouter" and not self.settings.openrouter_api_key:
             logger.warning("OPENROUTER_API_KEY not set, intelligence planning will fail")
 
     def calculate_optimal_clip_count(
@@ -525,7 +527,20 @@ class IntelligencePlannerService:
         logger.info("Transcript text length: %s chars", len(transcript_text))
         
         frames_to_send = frames[:48]
-        if self.settings.clipping_mode == "advanced" and not self.settings.planner_supports_images:
+        use_claude_code = self.settings.planner_backend == "claude_code"
+        if use_claude_code and not transcript:
+            # Claude Code planning is text-only; silent videos need a vision model.
+            if not self.settings.openrouter_api_key:
+                raise ClaudeCodePlanningError(
+                    "This video has no usable speech. Claude Code plans from the transcript only; "
+                    "add an OpenRouter key to plan clips from video frames.",
+                    reason="needs_speech",
+                )
+            logger.info("No usable speech: planning visual-only clips with OpenRouter instead of Claude Code")
+            use_claude_code = False
+        if use_claude_code:
+            frames_to_send = []
+        elif self.settings.clipping_mode == "advanced" and not self.settings.planner_supports_images:
             if not transcript:
                 raise VisualPlanningUnsupportedError("Selected planner requires a video with speech")
             frames_to_send = []
@@ -563,15 +578,24 @@ class IntelligencePlannerService:
             longform,
         )
         
-        model_name = self.settings.planner_model
-        fallback_models = self.settings.get_planner_fallback_models()
-        logger.info(
-            f"Calling planner model {model_name} "
-            f"(fallbacks: {fallback_models or 'none'}, "
-            f"reasoning: {'model default' if self.settings.clipping_mode == 'advanced' else self.settings.planner_reasoning_effort}) for clip planning..."
-        )
+        if use_claude_code:
+            model_name = f"claude-code/{self.settings.claude_code_model}"
+            fallback_models = []
+            logger.info(
+                f"Calling Claude Code ({self.settings.claude_code_model}, "
+                f"effort: {self.settings.planner_reasoning_effort}) for clip planning..."
+            )
+        else:
+            model_name = self.settings.planner_model
+            fallback_models = self.settings.get_planner_fallback_models()
+            logger.info(
+                f"Calling planner model {model_name} "
+                f"(fallbacks: {fallback_models or 'none'}, "
+                f"reasoning: {'model default' if self.settings.clipping_mode == 'advanced' else self.settings.planner_reasoning_effort}) for clip planning..."
+            )
 
-        max_attempts = 3
+        # Claude Code runs can take minutes each: retry invalid output once.
+        max_attempts = 2 if use_claude_code else 3
         cumulative_prompt_tokens = 0
         cumulative_completion_tokens = 0
         cumulative_total_tokens = 0
@@ -584,11 +608,14 @@ class IntelligencePlannerService:
         for attempt in range(max_attempts):
             attempts_made += 1
             try:
-                response, usage_data = await self._call_openrouter(
-                    model=model_name,
-                    fallback_models=fallback_models,
-                    messages=messages,
-                )
+                if use_claude_code:
+                    response, usage_data = await self._call_claude_code(messages)
+                else:
+                    response, usage_data = await self._call_openrouter(
+                        model=model_name,
+                        fallback_models=fallback_models,
+                        messages=messages,
+                    )
                 served_by = response.get("model") or model_name
                 cumulative_prompt_tokens += usage_data["prompt_tokens"]
                 cumulative_completion_tokens += usage_data["completion_tokens"]
@@ -628,7 +655,7 @@ class IntelligencePlannerService:
             result.segments = self._finalize_clips(result.segments, clip_count)
             result.total_clips = len(result.segments)
             result.api_costs = PlanningApiCosts(
-                provider="openrouter",
+                provider="claude_code" if use_claude_code else "openrouter",
                 model=served_by,
                 prompt_tokens=cumulative_prompt_tokens,
                 completion_tokens=cumulative_completion_tokens,
@@ -640,7 +667,7 @@ class IntelligencePlannerService:
             logger.info(
                 f"Planning API cost: ${cumulative_cost:.6f} "
                 f"({cumulative_total_tokens} tokens, {attempts_made} attempt(s), "
-                f"model={served_by}, source={'openrouter' if cost_reported else 'estimate'})"
+                f"model={served_by}, source={'claude_code' if use_claude_code else 'openrouter' if cost_reported else 'estimate'})"
             )
             return result
 
@@ -1013,6 +1040,54 @@ Do not overlap clips by more than 5 seconds."""
             return await chat_completion(client, payload)
         except OpenRouterError as e:
             raise IntelligencePlanningError(str(e), retryable=e.retryable) from e
+
+    async def _call_claude_code(self, messages: list[dict]) -> tuple[dict, dict]:
+        """Plan with the local Claude Code CLI on the user's subscription.
+
+        Sends the same system and user messages as OpenRouter (text only) and
+        returns an OpenRouter-shaped response for _parse_clip_plan_response.
+        Subscription usage is not billed per call, so the cost is 0.
+
+        Raises:
+            ClaudeCodePlanningError: retryable only for invalid JSON output.
+        """
+        schema = clip_plan_schema(getattr(self, "_current_longform", False))
+        system_prompt = messages[0]["content"]
+        user_text = "\n".join(
+            part["text"] for part in messages[1]["content"] if part.get("type") == "text"
+        )
+        user_text += (
+            "\n\nReturn ONLY a JSON object that matches this JSON Schema, with no prose "
+            f"and no code fences:\n{json.dumps(schema)}"
+        )
+        try:
+            plan, usage = await run_claude_json(
+                system_prompt,
+                user_text,
+                schema,
+                model=self.settings.claude_code_model,
+                effort=self.settings.planner_reasoning_effort,
+                timeout_seconds=self.settings.claude_code_timeout_seconds,
+                cli_path=self.settings.claude_code_cli,
+            )
+        except ClaudeCodeError as e:
+            raise ClaudeCodePlanningError(
+                CLAUDE_CODE_MESSAGES.get(e.reason, str(e)),
+                reason=e.reason,
+                retryable=e.reason == "invalid_output",
+            ) from e
+
+        response = {
+            "model": usage["model"] or f"claude-code/{self.settings.claude_code_model}",
+            "choices": [{"message": {"content": json.dumps(plan)}, "finish_reason": "stop"}],
+        }
+        usage_data = {
+            "prompt_tokens": usage["input_tokens"],
+            "completion_tokens": usage["output_tokens"],
+            "total_tokens": usage["input_tokens"] + usage["output_tokens"],
+            "cost": 0.0,
+        }
+        return response, usage_data
 
     def _parse_clip_plan_response(self, response: dict) -> ClipPlanResponse:
         """Parse OpenRouter response into ClipPlanResponse."""
@@ -1476,3 +1551,11 @@ class IntelligencePlanningError(Exception):
 
 class VisualPlanningUnsupportedError(IntelligencePlanningError):
     """The selected text-only planner cannot analyze a silent video."""
+
+
+class ClaudeCodePlanningError(IntelligencePlanningError):
+    """Claude Code planning failed; `reason` is a key of CLAUDE_CODE_MESSAGES."""
+
+    def __init__(self, message: str, reason: str, retryable: bool = False):
+        super().__init__(message, retryable=retryable)
+        self.reason = reason if reason in CLAUDE_CODE_MESSAGES else "failed"

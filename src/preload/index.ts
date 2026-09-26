@@ -21,6 +21,7 @@ export interface ClipSettings {
   outputDirectory: string
   pythonPath: string
   customVocabulary: string
+  plannerBackend: 'openrouter' | 'claude_code'
 }
 
 export type { ClipJobRequest, JobSnapshot } from '../shared/jobs'

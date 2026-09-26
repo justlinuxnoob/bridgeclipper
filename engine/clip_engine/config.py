@@ -9,7 +9,7 @@ import os
 from functools import lru_cache
 from typing import List, Literal, Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
@@ -651,6 +651,16 @@ class Settings(BaseSettings):
     # Includes reasoning tokens; 100 clips of JSON is ~15k on its own.
     planner_max_output_tokens: int = 32000
 
+    # Who picks the clips: "openrouter" (planner_model above, billed per token)
+    # or "claude_code" (the local `claude` CLI in print mode on the user's
+    # Claude subscription; text-only, so silent videos still need OpenRouter).
+    planner_backend: Literal["openrouter", "claude_code"] = "openrouter"
+    # Empty finds `claude` on PATH, then in the usual install locations.
+    claude_code_cli: str = ""
+    # A model alias ("opus", "sonnet") or a full model name.
+    claude_code_model: str = "opus"
+    claude_code_timeout_seconds: float = 600.0
+
     # Layout vision: classifies each shot's framing and locates webcam/screen
     # overlays from one keyframe per distinct setup. Gemini 3.8 Flash has the
     # best native box localization per dollar (AA MMMU-Pro 0.856, ~$0.001/frame).
@@ -686,6 +696,13 @@ class Settings(BaseSettings):
         if self.clipping_mode == "advanced":
             return []
         return self._split_models(self.planner_fallback_models, self.planner_model)
+
+    @model_validator(mode="after")
+    def _vision_needs_openrouter(self) -> "Settings":
+        # Layout vision is an OpenRouter call; local face tracking still runs.
+        if not self.openrouter_api_key:
+            self.layout_vision_enabled = False
+        return self
 
     def get_layout_vision_fallback_models(self) -> List[str]:
         """Fallback layout-vision models, excluding blanks and the primary."""

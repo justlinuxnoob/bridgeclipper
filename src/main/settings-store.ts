@@ -16,10 +16,15 @@ export interface AppSettings {
   pythonPath: string
   /** Names and jargon the speech-to-text should spell correctly, one per line. */
   customVocabulary: string
+  /** Who picks the clips: OpenRouter, or the local Claude Code CLI on the user's Claude plan. */
+  plannerBackend: PlannerBackend
 }
 
+export const PLANNER_BACKENDS = ['openrouter', 'claude_code'] as const
+export type PlannerBackend = (typeof PLANNER_BACKENDS)[number]
+
 export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey'
-export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary'> & {
+export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'plannerBackend'> & {
   openrouterConfigured: boolean
   zernioConfigured: boolean
 }
@@ -32,7 +37,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   zernioApiKey: '',
   outputDirectory: join(app.getPath('home'), 'BridgeClip'),
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
-  customVocabulary: ''
+  customVocabulary: '',
+  plannerBackend: 'openrouter'
 }
 
 const SETTINGS_VERSION = 7
@@ -46,6 +52,7 @@ interface PersistedSettings {
   outputDirectory: string
   pythonPath: string
   customVocabulary?: string
+  plannerBackend?: PlannerBackend
 }
 
 function ensureDir(dir: string): string {
@@ -69,12 +76,17 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
     zernioApiKey: (settings.zernioApiKey ?? DEFAULT_SETTINGS.zernioApiKey).trim(),
     outputDirectory: (settings.outputDirectory || DEFAULT_SETTINGS.outputDirectory).trim(),
     pythonPath: (settings.pythonPath || DEFAULT_SETTINGS.pythonPath).trim(),
-    customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n')
+    customVocabulary: vocabularyTerms(settings.customVocabulary ?? DEFAULT_SETTINGS.customVocabulary).join('\n'),
+    plannerBackend: oneOf(PLANNER_BACKENDS, settings.plannerBackend, DEFAULT_SETTINGS.plannerBackend)
   }
   normalized.outputDirectory ||= DEFAULT_SETTINGS.outputDirectory
   normalized.pythonPath ||= DEFAULT_SETTINGS.pythonPath
   if (!isAbsolute(normalized.outputDirectory)) throw new Error('Settings folders must be absolute paths')
   return normalized
+}
+
+function oneOf<T extends string>(allowed: readonly T[], value: unknown, fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback
 }
 
 function canEncrypt(): boolean {
@@ -142,7 +154,8 @@ export function loadSettings(): AppSettings {
       ...secrets,
       outputDirectory: typeof raw.outputDirectory === 'string' ? raw.outputDirectory : DEFAULT_SETTINGS.outputDirectory,
       pythonPath: typeof raw.pythonPath === 'string' ? raw.pythonPath : DEFAULT_SETTINGS.pythonPath,
-      customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary
+      customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary,
+      plannerBackend: oneOf(PLANNER_BACKENDS, raw.plannerBackend, DEFAULT_SETTINGS.plannerBackend)
     })
 
     if (needsMigration && canEncrypt()) writeSettings(settings)
@@ -162,7 +175,8 @@ function writeSettings(settings: AppSettings): void {
     zernioApiKey: encodeSecret(settings.zernioApiKey),
     outputDirectory: settings.outputDirectory,
     pythonPath: settings.pythonPath,
-    customVocabulary: settings.customVocabulary
+    customVocabulary: settings.customVocabulary,
+    plannerBackend: settings.plannerBackend
   }
 
   let fd: number | undefined
@@ -190,18 +204,20 @@ export function publicSettings(settings: AppSettings): PublicSettings {
     outputDirectory: settings.outputDirectory,
     pythonPath: settings.pythonPath,
     customVocabulary: settings.customVocabulary,
+    plannerBackend: settings.plannerBackend,
     openrouterConfigured: Boolean(settings.openrouterApiKey),
     zernioConfigured: Boolean(settings.zernioApiKey)
   }
 }
 
-export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary'>): PublicSettings {
+export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'plannerBackend'>): PublicSettings {
   const current = loadSettings()
   return publicSettings(saveSettings({
     ...current,
     outputDirectory: update.outputDirectory,
     pythonPath: update.pythonPath,
-    customVocabulary: update.customVocabulary
+    customVocabulary: update.customVocabulary,
+    plannerBackend: update.plannerBackend ?? current.plannerBackend
   }))
 }
 
@@ -234,6 +250,7 @@ export function replaceApiKey(key: ApiKeyName, value: string): PublicSettings {
 export function getSettingsForBridge(settings: AppSettings): Record<string, string> {
   return {
     OPENROUTER_API_KEY: settings.openrouterApiKey,
+    PLANNER_BACKEND: settings.plannerBackend,
     LOCAL_MODE: 'true',
     LOCAL_OUTPUT_DIR: settings.outputDirectory
   }

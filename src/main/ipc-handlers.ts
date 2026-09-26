@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { existsSync, realpathSync } from 'fs'
-import { loadSettings, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
+import { PLANNER_BACKENDS, loadSettings, publicSettings, replaceApiKey, savePublicSettings, type ApiKeyName, type PublicSettings } from './settings-store'
 import { ensureOutputDir, getJobHistory, getJobOutput, generateThumbnail } from './file-manager'
 import {
   getEnginePath,
@@ -66,6 +66,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     const current = loadSettings()
     if (!settings || typeof settings !== 'object') throw new Error('Invalid settings')
     if (typeof settings.outputDirectory !== 'string' || typeof settings.pythonPath !== 'string' || typeof settings.customVocabulary !== 'string') throw new Error('Invalid settings')
+    if (settings.plannerBackend !== undefined && !PLANNER_BACKENDS.includes(settings.plannerBackend)) throw new Error('Invalid settings')
     if (settings.outputDirectory !== current.outputDirectory && !selectedOutputDirectories.has(settings.outputDirectory)) throw new Error('Choose the output folder with the folder picker')
     if (app.isPackaged && settings.pythonPath !== current.pythonPath) throw new Error('Runtime paths cannot be changed in packaged builds')
     return savePublicSettings(settings)

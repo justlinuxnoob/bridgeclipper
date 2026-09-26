@@ -9,6 +9,17 @@ TWITCH_ERRORS = {
     "twitch_unavailable": "Twitch VOD unavailable",
 }
 
+# Shown to the user for each ClaudeCodePlanningError reason.
+CLAUDE_CODE_MESSAGES = {
+    "cli_missing": "Claude Code CLI not found. Install Claude Code and run `claude` once to log in",
+    "not_logged_in": "Claude Code is not logged in. Run `claude` in a terminal and use /login",
+    "usage_limit": "Claude Code usage limit reached. Wait for it to reset or switch the clip planner to OpenRouter",
+    "timeout": "Claude Code clip planning timed out",
+    "invalid_output": "Claude Code returned an invalid clip plan",
+    "needs_speech": "This video has no speech. Claude Code plans from the transcript; add an OpenRouter key to plan from video frames",
+    "failed": "Claude Code clip planning failed",
+}
+
 DISK_FULL_ERRNOS = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
 DISK_FULL_MARKERS = ("no space left on device", "disk quota exceeded")
 
@@ -39,6 +50,8 @@ def safe_processing_error(error: Exception) -> str:
         return "Processing timed out"
     if type(error).__name__ == "VisualPlanningUnsupportedError":
         return "Selected planner requires a video with speech"
+    if type(error).__name__ == "ClaudeCodePlanningError":
+        return CLAUDE_CODE_MESSAGES.get(getattr(error, "reason", None), CLAUDE_CODE_MESSAGES["failed"])
     if type(error).__name__ == "VideoDownloadError":
         return TWITCH_ERRORS.get(getattr(error, "reason", None), "Video download failed")
     if type(error).__name__ == "TranscriptionProviderError":
@@ -78,6 +91,9 @@ def safe_failure_code(error: Exception) -> str:
         return "storage.full"
     if type(error).__name__ == "VisualPlanningUnsupportedError":
         return "planning.images_unsupported"
+    if type(error).__name__ == "ClaudeCodePlanningError":
+        reason = getattr(error, "reason", None)
+        return f"planning.claude_code.{reason if reason in CLAUDE_CODE_MESSAGES else 'failed'}"
     if type(error).__name__ in {"TranscriptionError", "TranscriptionProviderError"}:
         reason = getattr(error, "reason", "unknown")
         if reason in {
@@ -101,7 +117,7 @@ def safe_job_error_text(error: str | None) -> str | None:
     """Only expose known, fixed messages from stored job state."""
     if error is None:
         return None
-    if error in TWITCH_ERRORS.values():
+    if error in TWITCH_ERRORS.values() or error in CLAUDE_CODE_MESSAGES.values():
         return error
     if error in {
         "Processing timed out", "Video download failed", "No clip-worthy moments found",
